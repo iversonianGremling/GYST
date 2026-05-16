@@ -21,6 +21,16 @@ def _slugify(title: str) -> str:
     return re.sub(r"[\s_-]+", "-", slug).strip("-")
 
 
+_DEFAULT_COVER_SETTINGS: dict[str, Any] = {
+    "blur": 0,
+    "brightness": 0.8,
+    "overlay_color": "#000000",
+    "overlay_opacity": 0.45,
+    "position": "center",
+    "scale": 1.05,
+}
+
+
 class InterestIn(BaseModel):
     kind: str = "project"
     title: str
@@ -33,6 +43,7 @@ class InterestPatch(BaseModel):
     kind: str | None = None
     description: str | None = None
     cover_path: str | None = None
+    cover_settings: dict[str, Any] | None = None
     archived: bool | None = None
 
 
@@ -44,6 +55,7 @@ def _out(i: Interest) -> dict[str, Any]:
         "slug": i.slug,
         "description": i.description,
         "cover_path": i.cover_path,
+        "cover_settings": i.cover_settings or _DEFAULT_COVER_SETTINGS,
         "archived": i.archived,
         "created_at": i.created_at.isoformat(),
         "updated_at": i.updated_at.isoformat(),

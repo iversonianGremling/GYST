@@ -61,6 +61,7 @@ class Interest(Base):
     slug: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     cover_path: Mapped[str | None] = mapped_column(String)
+    cover_settings: Mapped[dict | None] = mapped_column(JSON)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

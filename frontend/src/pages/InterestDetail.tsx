@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { Trash2, FileIcon, ImageIcon, Music2, FileText, Plus, Rss } from 'lucide-react'
+import { Trash2, FileIcon, ImageIcon, Music2, FileText, Plus, Rss, Save } from 'lucide-react'
 import { api, type Interest, type Note, type MediaAsset, type Project } from '@/api/client'
 import { formatRelative } from '@/lib/utils'
 import DropZone from '@/components/DropZone'
 import AudioPlayer from '@/components/AudioPlayer'
+import CoverHero, { type CoverSettings, DEFAULT_COVER_SETTINGS } from '@/components/CoverHero'
 import { PluginSlot, usePluginSlotReady } from '@/plugins/slots'
 
 interface FeedEntry { url: string; interest_id: string | null }
@@ -25,8 +26,11 @@ export default function InterestDetail() {
   const [notes,    setNotes]    = useState<Note[]>([])
   const [media,    setMedia]    = useState<MediaAsset[]>([])
   const [tab,      setTab]      = useState<Tab>('notes')
-  const [feeds,    setFeeds]    = useState<FeedEntry[]>([])
-  const [newFeed,  setNewFeed]  = useState('')
+  const [feeds,        setFeeds]        = useState<FeedEntry[]>([])
+  const [newFeed,      setNewFeed]      = useState('')
+  const [coverSettings, setCoverSettings] = useState<CoverSettings>(DEFAULT_COVER_SETTINGS)
+  const [coverDirty,   setCoverDirty]   = useState(false)
+  const [coverSaving,  setCoverSaving]  = useState(false)
 
   const { ready: pluginReady, count: pluginCount } = usePluginSlotReady('interest.project')
 
@@ -50,9 +54,35 @@ export default function InterestDetail() {
       api.get<Note[]>(`/notes?interest_id=${id}`),
       api.get<MediaAsset[]>(`/media?interest_id=${id}`),
       api.get<Project>(`/projects/${id}`).catch(() => null),
-    ]).then(([i, n, m, p]) => { setInterest(i); setNotes(n); setMedia(m); setProject(p) })
+    ]).then(([i, n, m, p]) => {
+      setInterest(i); setNotes(n); setMedia(m); setProject(p)
+      if (i?.cover_settings) setCoverSettings(i.cover_settings as CoverSettings)
+    })
     loadFeeds()
   }, [id])
+
+  const uploadCover = async (file: File) => {
+    if (!id) return
+    const form = new FormData()
+    form.append('file', file)
+    form.append('interest_id', id)
+    const asset = await api.upload<MediaAsset>('/media', form)
+    await api.patch(`/interests/${id}`, { cover_path: asset.url })
+    setInterest((prev) => prev ? { ...prev, cover_path: asset.url } : prev)
+  }
+
+  const saveCoverSettings = async () => {
+    if (!id) return
+    setCoverSaving(true)
+    await api.patch(`/interests/${id}`, { cover_settings: coverSettings })
+    setCoverDirty(false)
+    setCoverSaving(false)
+  }
+
+  const handleSettingsChange = (s: CoverSettings) => {
+    setCoverSettings(s)
+    setCoverDirty(true)
+  }
 
   const addFeed = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -96,21 +126,27 @@ export default function InterestDetail() {
   ]
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <div className="flex items-center gap-2 text-xs text-text-3 mb-1">
-            <Link to="/interests" className="hover:text-accent">Interests</Link>
-            <span>/</span>
-            <span>{interest.kind}</span>
-          </div>
-          <h1 className="text-2xl font-semibold text-text-1">{interest.title}</h1>
-          {interest.description && (
-            <p className="text-sm text-text-2 mt-1">{interest.description}</p>
-          )}
-        </div>
+    <div className="max-w-4xl mx-auto">
+      {/* Cover hero */}
+      <CoverHero
+        title={interest.title}
+        coverUrl={interest.cover_path ?? null}
+        settings={coverSettings}
+        editable
+        onUpload={uploadCover}
+        onSettingsChange={handleSettingsChange}
+      />
+
+      <div className="px-6 pt-3 pb-6">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-xs text-text-3 mb-1">
+        <Link to="/interests" className="hover:text-accent">Interests</Link>
+        <span>/</span>
+        <span>{interest.kind}</span>
       </div>
+      {interest.description && (
+        <p className="text-sm text-text-2 mb-4">{interest.description}</p>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 mb-4 border-b border-bg-3">
@@ -256,8 +292,37 @@ export default function InterestDetail() {
       )}
 
       {tab === 'settings' && (
-        <div className="text-sm text-text-3">Settings coming soon.</div>
+        <div className="space-y-6 max-w-sm">
+          <div>
+            <h3 className="text-xs text-text-3 uppercase tracking-wide mb-2">Cover image</h3>
+            <p className="text-xs text-text-3 mb-3">Click "Edit cover" on the hero above to upload an image and adjust blur, brightness, tint, zoom, and position. Changes are previewed live.</p>
+            {coverDirty && (
+              <button
+                onClick={saveCoverSettings}
+                disabled={coverSaving}
+                className="btn-primary text-sm flex items-center gap-1.5"
+              >
+                <Save size={13} /> {coverSaving ? 'Saving…' : 'Save cover settings'}
+              </button>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-xs text-text-3 uppercase tracking-wide mb-2">Danger zone</h3>
+            <button
+              onClick={async () => {
+                if (!id || !confirm(`Archive "${interest.title}"?`)) return
+                await api.patch(`/interests/${id}`, { archived: true })
+                window.history.back()
+              }}
+              className="text-xs text-danger border border-danger/30 hover:bg-danger/10 px-3 py-1.5 rounded-md transition-colors"
+            >
+              Archive interest
+            </button>
+          </div>
+        </div>
       )}
+      </div>
     </div>
   )
 }

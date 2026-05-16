@@ -43,6 +43,15 @@ export const api = {
 }
 
 // Typed helpers
+export interface CoverSettings {
+  blur: number
+  brightness: number
+  overlay_color: string
+  overlay_opacity: number
+  position: string
+  scale: number
+}
+
 export interface Interest {
   id: string
   kind: 'content' | 'project'
@@ -50,6 +59,7 @@ export interface Interest {
   slug: string
   description: string | null
   cover_path: string | null
+  cover_settings: CoverSettings | null
   archived: boolean
   created_at: string
   updated_at: string
