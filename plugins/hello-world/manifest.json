@@ -1,0 +1,10 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "version": "0.1.0",
+  "backend": "backend.py",
+  "widget": "HelloWorldWidget",
+  "hooks": [],
+  "ui_slots": ["sidebar.nav"],
+  "permissions": []
+}

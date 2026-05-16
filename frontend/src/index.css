@@ -1,0 +1,83 @@
+@import './theme/tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply bg-bg-1 text-text-1 font-sans;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  :where(a) {
+    color: var(--color-accent);
+  }
+  :where(a):hover {
+    color: var(--color-accent-hover);
+  }
+
+  ::selection {
+    background: var(--color-accent-dim);
+    color: var(--color-text-1);
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-bg-4);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-3);
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-hover hover:text-white;
+  }
+  .btn-ghost {
+    @apply btn text-text-2 hover:text-text-1 hover:bg-bg-3;
+  }
+  .btn-danger {
+    @apply btn text-danger border border-danger hover:bg-danger hover:text-white;
+  }
+  .card {
+    @apply bg-bg-2 rounded-lg border border-bg-3;
+  }
+  .input {
+    @apply bg-bg-3 border border-bg-4 rounded-md px-3 py-1.5 text-sm text-text-1
+           placeholder:text-text-3 focus:outline-none;
+  }
+  .input:focus {
+    box-shadow: 0 0 0 2px rgba(124, 106, 247, 0.35);
+  }
+  .sidebar-item {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-text-2
+           transition-colors cursor-pointer;
+  }
+  .sidebar-item:hover {
+    background: var(--color-bg-3);
+    color: var(--color-text-1);
+  }
+  .sidebar-item.active {
+    color: var(--color-accent);
+    background: var(--color-accent-dim);
+  }
+  .sidebar-item.active:hover {
+    color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent-dim) 70%, var(--color-bg-3));
+  }
+}

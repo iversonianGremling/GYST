@@ -1,0 +1,31 @@
+[server]
+host = "127.0.0.1"
+port = 8000
+debug = false
+
+[data]
+root = "./data"          # relative to this file; override in container
+
+[auth]
+# Run: python -c "from gyst.auth import hash_password; print(hash_password('yourpassword'))"
+# then paste the hash here.
+password_hash = ""
+secret_key = ""
+session_ttl_days = 30
+
+[plugins]
+# Comma-separated list of plugin IDs to enable; empty = all discovered
+enabled = []
+directory = "./plugins"   # relative to repo root (gyst.toml location)
+
+[recs]
+embedding_model = "all-MiniLM-L6-v2"
+w_embed = 0.5
+w_tag = 0.3
+w_rating = 0.15
+w_slop = 0.05
+slop_session_threshold_s = 120   # sessions shorter than this = slop signal
+
+[scheduler]
+feed_interval_minutes = 60
+embed_interval_minutes = 360

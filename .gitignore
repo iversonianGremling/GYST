@@ -1,0 +1,42 @@
+# ── Runtime data (never commit) ───────────────────────────────────────────────
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# ── Config with secrets ───────────────────────────────────────────────────────
+gyst.toml
+!gyst.toml.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/public/alphaTab.worker.mjs
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/

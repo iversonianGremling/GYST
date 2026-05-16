@@ -1,0 +1,10 @@
+{
+  "id": "linkwarden",
+  "name": "Linkwarden",
+  "version": "0.1.0",
+  "backend": "backend.py",
+  "widget": "LinkwardenWidget",
+  "hooks": ["feed.fetch"],
+  "ui_slots": ["settings.integrations"],
+  "permissions": ["http.outbound"]
+}

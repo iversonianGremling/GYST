@@ -1,0 +1,10 @@
+{
+  "id": "music-project",
+  "name": "Music Project",
+  "version": "0.1.0",
+  "backend": "backend.py",
+  "widget": "MusicProjectWidget",
+  "hooks": [],
+  "ui_slots": ["interest.project"],
+  "permissions": []
+}

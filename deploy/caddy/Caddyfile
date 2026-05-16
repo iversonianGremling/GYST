@@ -1,0 +1,16 @@
+gyst.local {
+    # TLS: replace with your domain or use internal Caddy CA for self-signed
+    tls internal
+
+    # Proxy API to uvicorn
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    # Serve frontend static files (built by `npm run build`)
+    handle {
+        root * /opt/gyst/frontend/dist
+        try_files {path} /index.html
+        file_server
+    }
+}

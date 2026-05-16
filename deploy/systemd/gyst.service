@@ -1,0 +1,22 @@
+[Unit]
+Description=GYST backend
+After=network.target
+
+[Service]
+Type=simple
+User=gyst
+WorkingDirectory=/opt/gyst/backend
+# Run Alembic migrations before each start (idempotent)
+ExecStartPre=/opt/gyst/.venv/bin/alembic upgrade head
+ExecStart=/opt/gyst/.venv/bin/uvicorn gyst.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONPATH=/opt/gyst/backend
+# Override config if needed:
+# Environment=GYST_SERVER__DEBUG=false
+
+[Install]
+WantedBy=multi-user.target
