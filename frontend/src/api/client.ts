@@ -60,6 +60,7 @@ export interface Interest {
   description: string | null
   cover_path: string | null
   cover_settings: CoverSettings | null
+  folder_id: string | null
   archived: boolean
   created_at: string
   updated_at: string
@@ -72,11 +73,26 @@ export interface Project {
   settings: Record<string, unknown>
 }
 
+export interface Folder {
+  id: string
+  name: string
+  parent_id: string | null
+  entity_type: string
+  color: string | null
+  position: number
+  created_at: string
+}
+
 export interface Note {
   id: string
   interest_id: string | null
+  folder_id: string | null
   title: string
   slug: string
+  description: string | null
+  cover_path: string | null
+  cover_settings: CoverSettings | null
+  pinned: boolean
   body_md: string
   created_at: string
   updated_at: string

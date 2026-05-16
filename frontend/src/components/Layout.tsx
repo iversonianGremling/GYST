@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  Home, Star, FileText, Calendar, Rss, Activity,
+  Home, Tv2, FolderKanban, FileText, Calendar, Rss, Activity,
   Settings, Sun, Moon, LogOut, Menu, X,
 } from 'lucide-react'
 import { useSession } from '@/stores/session'
@@ -11,7 +11,8 @@ import { PluginSlot } from '@/plugins/slots'
 
 const NAV = [
   { to: '/',          label: 'Home',      Icon: Home },
-  { to: '/interests', label: 'Interests', Icon: Star },
+  { to: '/content',   label: 'Content',   Icon: Tv2 },
+  { to: '/projects',  label: 'Projects',  Icon: FolderKanban },
   { to: '/notes',     label: 'Notes',     Icon: FileText },
   { to: '/calendar',  label: 'Calendar',  Icon: Calendar },
   { to: '/feed',      label: 'Feed',      Icon: Rss },

@@ -1,14 +1,15 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Save, Link2, Columns2 } from 'lucide-react'
+import { Eye, EyeOff, Save, Link2, Columns2, Pin, PinOff } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { api, type Note } from '@/api/client'
+import { api, type Note as NoteType, type MediaAsset } from '@/api/client'
 import { resolveWikilinks } from '@/lib/wikilinks'
+import CoverHero, { DEFAULT_COVER_SETTINGS, type CoverSettings } from '@/components/CoverHero'
 
 type ViewMode = 'edit' | 'preview' | 'split'
 
-const SPLIT_MIN = 15  // percent
+const SPLIT_MIN = 15
 const SPLIT_MAX = 85
 
 export default function NoteEditor() {
@@ -19,6 +20,11 @@ export default function NoteEditor() {
 
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
+  const [description, setDescription] = useState('')
+  const [pinned, setPinned] = useState(false)
+  const [coverUrl, setCoverUrl] = useState<string | null>(null)
+  const [coverSettings, setCoverSettings] = useState<CoverSettings>(DEFAULT_COVER_SETTINGS)
+  const [coverDirty, setCoverDirty] = useState(false)
   const [mode, setMode] = useState<ViewMode>('split')
   const [backlinks, setBacklinks] = useState<{ id: string; title: string }[]>([])
   const [saving, setSaving] = useState(false)
@@ -29,9 +35,13 @@ export default function NoteEditor() {
 
   useEffect(() => {
     if (isNew) return
-    api.get<Note>(`/notes/${id}`).then((n) => {
+    api.get<NoteType>(`/notes/${id}`).then((n) => {
       setTitle(n.title)
       setBody(n.body_md)
+      setDescription(n.description ?? '')
+      setPinned(n.pinned)
+      setCoverUrl(n.cover_path)
+      setCoverSettings(n.cover_settings ?? DEFAULT_COVER_SETTINGS)
     })
     api.get<{ id: string; title: string }[]>(`/notes/${id}/backlinks`).then(setBacklinks)
   }, [id, isNew])
@@ -40,19 +50,26 @@ export default function NoteEditor() {
     setSaving(true)
     try {
       if (isNew) {
-        const created = await api.post<Note>('/notes', {
+        const created = await api.post<NoteType>('/notes', {
           title,
           body_md: body,
+          description: description || null,
+          pinned,
           interest_id: searchParams.get('interest_id') || null,
         })
         navigate(`/notes/${created.id}`, { replace: true })
       } else {
-        await api.patch(`/notes/${id}`, { title, body_md: body })
+        const patch: Record<string, unknown> = { title, body_md: body, description: description || null, pinned }
+        if (coverDirty) {
+          patch.cover_settings = coverSettings
+        }
+        await api.patch(`/notes/${id}`, patch)
+        setCoverDirty(false)
       }
     } finally {
       setSaving(false)
     }
-  }, [id, isNew, title, body, navigate, searchParams])
+  }, [id, isNew, title, body, description, pinned, coverSettings, coverDirty, navigate, searchParams])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -61,6 +78,25 @@ export default function NoteEditor() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [save])
+
+  const uploadCover = async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (id && !isNew) form.append('note_id', id)
+    const asset = await api.upload<MediaAsset>('/media', form)
+    setCoverUrl(asset.url)
+    if (!isNew && id) {
+      await api.patch(`/notes/${id}`, { cover_path: asset.url })
+    }
+  }
+
+  const togglePin = async () => {
+    const next = !pinned
+    setPinned(next)
+    if (!isNew && id) {
+      await api.patch(`/notes/${id}`, { pinned: next })
+    }
+  }
 
   // ── Draggable separator ──────────────────────────────────────────────────
   const applyDrag = useCallback((clientY: number) => {
@@ -76,7 +112,6 @@ export default function NoteEditor() {
     dragging.current = true
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
-
     const onMove = (ev: MouseEvent) => { if (dragging.current) applyDrag(ev.clientY) }
     const onUp = () => {
       dragging.current = false
@@ -104,7 +139,6 @@ export default function NoteEditor() {
     window.addEventListener('touchmove', onMove, { passive: false })
     window.addEventListener('touchend', onEnd)
   }, [applyDrag])
-
   // ────────────────────────────────────────────────────────────────────────
 
   const previewBody = resolveWikilinks(body, (t) => `/notes?q=${encodeURIComponent(t)}`)
@@ -133,6 +167,20 @@ export default function NoteEditor() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Cover hero — only when not new and we have a title */}
+      {!isNew && title && (
+        <div className="shrink-0">
+          <CoverHero
+            title={title}
+            coverUrl={coverUrl}
+            settings={coverSettings}
+            editable
+            onUpload={uploadCover}
+            onSettingsChange={(s) => { setCoverSettings(s); setCoverDirty(true) }}
+          />
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-bg-3 bg-bg-2 shrink-0">
         <input
@@ -141,6 +189,23 @@ export default function NoteEditor() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
         />
+
+        {/* Description (compact) */}
+        <input
+          className="w-48 bg-transparent text-xs text-text-3 focus:outline-none placeholder:text-text-3 border-l border-bg-3 pl-3 py-0.5 focus:text-text-2"
+          placeholder="Description…"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+
+        {/* Pin toggle */}
+        <button
+          onClick={togglePin}
+          title={pinned ? 'Unpin' : 'Pin'}
+          className={`p-1.5 rounded transition-colors ${pinned ? 'text-accent' : 'text-text-3 hover:text-text-1 hover:bg-bg-3'}`}
+        >
+          {pinned ? <Pin size={14} /> : <PinOff size={14} />}
+        </button>
 
         {/* View mode toggles */}
         <div className="flex items-center gap-0.5 bg-bg-3 rounded-md p-0.5 shrink-0">
@@ -179,22 +244,13 @@ export default function NoteEditor() {
       {/* Content area */}
       <div className="flex flex-1 min-h-0">
         <div className="flex flex-col flex-1 min-h-0 min-w-0">
-          {mode === 'edit' && (
-            <div className="flex-1 min-h-0">{editor}</div>
-          )}
-
-          {mode === 'preview' && (
-            <div className="flex-1 min-h-0 bg-bg-2">{preview}</div>
-          )}
-
+          {mode === 'edit' && <div className="flex-1 min-h-0">{editor}</div>}
+          {mode === 'preview' && <div className="flex-1 min-h-0 bg-bg-2">{preview}</div>}
           {mode === 'split' && (
             <div ref={containerRef} className="flex flex-col flex-1 min-h-0">
-              {/* Editor pane */}
               <div style={{ height: `${splitRatio}%` }} className="min-h-0 overflow-hidden">
                 {editor}
               </div>
-
-              {/* Draggable separator */}
               <div
                 className="shrink-0 h-1.5 bg-bg-3 hover:bg-accent/40 active:bg-accent/60 cursor-row-resize transition-colors touch-none flex items-center justify-center group"
                 onMouseDown={onMouseDown}
@@ -202,8 +258,6 @@ export default function NoteEditor() {
               >
                 <div className="w-8 h-0.5 rounded-full bg-bg-4 group-hover:bg-accent/60 transition-colors" />
               </div>
-
-              {/* Preview pane */}
               <div style={{ height: `${100 - splitRatio}%` }} className="min-h-0 overflow-hidden bg-bg-2">
                 {preview}
               </div>
@@ -219,11 +273,7 @@ export default function NoteEditor() {
             </p>
             <div className="space-y-1">
               {backlinks.map((b) => (
-                <a
-                  key={b.id}
-                  href={`/notes/${b.id}`}
-                  className="block text-xs text-accent hover:underline truncate"
-                >
+                <a key={b.id} href={`/notes/${b.id}`} className="block text-xs text-accent hover:underline truncate">
                   {b.title}
                 </a>
               ))}

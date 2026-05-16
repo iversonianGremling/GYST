@@ -50,6 +50,26 @@ class Tagging(Base):
 
 
 # ---------------------------------------------------------------------------
+# Folders
+# ---------------------------------------------------------------------------
+
+class Folder(Base):
+    __tablename__ = "folder"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("folder.id", ondelete="CASCADE"))
+    entity_type: Mapped[str] = mapped_column(String, nullable=False)  # "content" | "project" | "note"
+    color: Mapped[str | None] = mapped_column(String)   # hex, e.g. "#6366f1"
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    children: Mapped[list["Folder"]] = relationship(
+        "Folder", back_populates="parent", cascade="all, delete-orphan",
+    )
+    parent: Mapped["Folder | None"] = relationship("Folder", back_populates="children", remote_side="Folder.id")
+
+
+# ---------------------------------------------------------------------------
 # Interests
 # ---------------------------------------------------------------------------
 
@@ -62,6 +82,7 @@ class Interest(Base):
     description: Mapped[str | None] = mapped_column(Text)
     cover_path: Mapped[str | None] = mapped_column(String)
     cover_settings: Mapped[dict | None] = mapped_column(JSON)
+    folder_id: Mapped[str | None] = mapped_column(ForeignKey("folder.id", ondelete="SET NULL"))
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -94,8 +115,13 @@ class Note(Base):
     __tablename__ = "note"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     interest_id: Mapped[str | None] = mapped_column(ForeignKey("interest.id", ondelete="SET NULL"))
+    folder_id: Mapped[str | None] = mapped_column(ForeignKey("folder.id", ondelete="SET NULL"))
     title: Mapped[str] = mapped_column(String, nullable=False)
     slug: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    cover_path: Mapped[str | None] = mapped_column(String)
+    cover_settings: Mapped[dict | None] = mapped_column(JSON)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     body_md: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

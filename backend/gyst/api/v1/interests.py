@@ -44,6 +44,7 @@ class InterestPatch(BaseModel):
     description: str | None = None
     cover_path: str | None = None
     cover_settings: dict[str, Any] | None = None
+    folder_id: str | None = None
     archived: bool | None = None
 
 
@@ -56,6 +57,7 @@ def _out(i: Interest) -> dict[str, Any]:
         "description": i.description,
         "cover_path": i.cover_path,
         "cover_settings": i.cover_settings or _DEFAULT_COVER_SETTINGS,
+        "folder_id": i.folder_id,
         "archived": i.archived,
         "created_at": i.created_at.isoformat(),
         "updated_at": i.updated_at.isoformat(),
@@ -64,11 +66,22 @@ def _out(i: Interest) -> dict[str, Any]:
 
 @router.get("")
 async def list_interests(
+    kind: str | None = None,
+    folder_id: str | None = None,
     archived: bool = False,
     session: AsyncSession = Depends(get_session),
     _uid: int = Depends(require_auth),
 ):
-    q = select(Interest).where(Interest.archived == archived).order_by(Interest.updated_at.desc())
+    q = select(Interest).where(Interest.archived == archived)
+    if kind:
+        q = q.where(Interest.kind == kind)
+    if folder_id is not None:
+        # "root" means no folder assigned
+        if folder_id == "root":
+            q = q.where(Interest.folder_id.is_(None))
+        else:
+            q = q.where(Interest.folder_id == folder_id)
+    q = q.order_by(Interest.updated_at.desc())
     result = await session.execute(q)
     return [_out(i) for i in result.scalars().all()]
 

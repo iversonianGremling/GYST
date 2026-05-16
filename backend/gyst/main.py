@@ -55,6 +55,7 @@ from gyst.api.v1 import telemetry as telemetry_router
 from gyst.api.v1 import search as search_router
 from gyst.api.v1 import plugins as plugins_router
 from gyst.api.v1 import tags as tags_router
+from gyst.api.v1 import folders as folders_router
 
 API = "/api/v1"
 app.include_router(auth_router.router,      prefix=API)
@@ -68,6 +69,7 @@ app.include_router(telemetry_router.router, prefix=API)
 app.include_router(search_router.router,    prefix=API)
 app.include_router(plugins_router.router,   prefix=API)
 app.include_router(tags_router.router,      prefix=API)
+app.include_router(folders_router.router,  prefix=API)
 
 
 @app.get("/api/v1/health", tags=["meta"])
