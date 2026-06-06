@@ -1,0 +1,11 @@
+{
+  "id": "code-project",
+  "name": "Code Project",
+  "version": "0.1.0",
+  "backend": "backend.py",
+  "widget": "CodeProjectWidget",
+  "hooks": [],
+  "ui_slots": ["interest.project"],
+  "project_types": ["code"],
+  "permissions": []
+}

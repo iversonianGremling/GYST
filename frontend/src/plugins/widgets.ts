@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import HelloWorldWidget from './HelloWorldWidget'
 import MusicProjectWidget from './MusicProjectWidget'
 import ResearchProjectWidget from './ResearchProjectWidget'
+import CodeProjectWidget from './CodeProjectWidget'
 import RssFeedWidget from './RssFeedWidget'
 import LinkwardenWidget from './LinkwardenWidget'
 
@@ -12,6 +13,7 @@ export const STATIC_WIDGETS: Record<string, ComponentType<Record<string, unknown
   'hello-world': HelloWorldWidget,
   'music-project': MusicProjectWidget,
   'research-project': ResearchProjectWidget,
+  'code-project': CodeProjectWidget,
   'rss-feed': RssFeedWidget,
   'linkwarden': LinkwardenWidget,
 }

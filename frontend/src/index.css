@@ -81,3 +81,15 @@
     background: color-mix(in srgb, var(--color-accent-dim) 70%, var(--color-bg-3));
   }
 }
+
+/* GitHub README rendering (code-project Overview) */
+.gh-readme h1, .gh-readme h2, .gh-readme h3 { font-weight: 600; margin: 0.8em 0 0.4em; line-height: 1.25; }
+.gh-readme h1 { font-size: 1.4em; } .gh-readme h2 { font-size: 1.2em; } .gh-readme h3 { font-size: 1.05em; }
+.gh-readme p, .gh-readme ul, .gh-readme ol { margin: 0.5em 0; }
+.gh-readme ul, .gh-readme ol { padding-left: 1.4em; list-style: revert; }
+.gh-readme a { color: var(--color-accent); }
+.gh-readme code { background: var(--color-bg-2); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+.gh-readme pre { background: var(--color-bg-2); padding: 0.8em; border-radius: 6px; overflow-x: auto; }
+.gh-readme pre code { background: none; padding: 0; }
+.gh-readme img { max-width: 100%; }
+.gh-readme table { border-collapse: collapse; } .gh-readme td, .gh-readme th { border: 1px solid var(--color-bg-3); padding: 0.3em 0.6em; }
