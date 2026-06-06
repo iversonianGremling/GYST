@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
-import { GitMerge, RefreshCw, Check, Download, HardDrive, ExternalLink } from 'lucide-react'
+import {
+  GitMerge, RefreshCw, Check, Download, HardDrive, ExternalLink,
+  FolderKanban, Layers, FileText,
+} from 'lucide-react'
 import { api } from '@/api/client'
 
 interface SyncStatus {
@@ -21,6 +24,44 @@ interface Conflict {
 }
 
 type Choice = 'local' | 'incoming'
+
+interface SyncItem { id: string; label: string; sync_enabled: boolean }
+
+function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled: boolean }) {
+  return (
+    <button
+      onClick={() => onChange(!on)} disabled={disabled} aria-pressed={on}
+      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? 'bg-accent' : 'bg-bg-3'}`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : ''}`} />
+    </button>
+  )
+}
+
+function SelectGroup({
+  icon, title, items, onToggle, busy, empty,
+}: {
+  icon: React.ReactNode; title: string; items: SyncItem[]
+  onToggle: (id: string, on: boolean) => void; busy: boolean; empty: string
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2 text-xs font-medium text-text-3 uppercase tracking-wide">
+        {icon} {title}
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-text-3 pl-6">{empty}</p>
+      ) : (
+        items.map((it) => (
+          <div key={it.id} className="flex items-center gap-3 pl-6 pr-1 py-1">
+            <span className="text-sm text-text-1 truncate">{it.label}</span>
+            <Toggle on={it.sync_enabled} disabled={busy} onChange={(v) => onToggle(it.id, v)} />
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
 
 function Side({
   label, title, body, tone, icon, onPick, picking,
@@ -55,16 +96,41 @@ function Side({
 export default function Sync() {
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [conflicts, setConflicts] = useState<Conflict[]>([])
+  const [projects, setProjects] = useState<SyncItem[]>([])
+  const [contents, setContents] = useState<SyncItem[]>([])
+  const [folders, setFolders] = useState<SyncItem[]>([])
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const [s, c] = await Promise.all([
+    const [s, c, proj, cont, fold] = await Promise.all([
       api.get<SyncStatus>('/sync/status'),
       api.get<Conflict[]>('/sync/conflicts'),
+      api.get<{ id: string; title: string; sync_enabled: boolean }[]>('/interests?kind=project&archived=false'),
+      api.get<{ id: string; title: string; sync_enabled: boolean }[]>('/interests?kind=content&archived=false'),
+      api.get<{ id: string; name: string; sync_enabled: boolean }[]>('/folders?entity_type=note'),
     ])
     setStatus(s); setConflicts(c)
+    setProjects(proj.map((p) => ({ id: p.id, label: p.title, sync_enabled: p.sync_enabled })))
+    setContents(cont.map((p) => ({ id: p.id, label: p.title, sync_enabled: p.sync_enabled })))
+    setFolders(fold.map((f) => ({ id: f.id, label: f.name, sync_enabled: f.sync_enabled })))
   }, [])
+
+  const toggleInterest = async (id: string, on: boolean) => {
+    setBusy(true)
+    try {
+      await api.patch(`/interests/${id}`, { sync_enabled: on })
+      const upd = (xs: SyncItem[]) => xs.map((x) => (x.id === id ? { ...x, sync_enabled: on } : x))
+      setProjects(upd); setContents(upd)
+    } finally { setBusy(false) }
+  }
+  const toggleFolder = async (id: string, on: boolean) => {
+    setBusy(true)
+    try {
+      await api.patch(`/folders/${id}`, { sync_enabled: on })
+      setFolders((xs) => xs.map((x) => (x.id === id ? { ...x, sync_enabled: on } : x)))
+    } finally { setBusy(false) }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -129,6 +195,29 @@ export default function Sync() {
       )}
 
       {msg && <p className="text-sm text-text-3">{msg}</p>}
+
+      {/* What syncs */}
+      <section className="space-y-4">
+        <h2 className="text-sm font-medium text-text-2 uppercase tracking-wide">What syncs</h2>
+        <p className="text-xs text-text-3 -mt-2">
+          Each enabled project becomes its own Gitea repo; enabled content and note
+          folders go to the <code>personal</code> repo. Changes propagate on the next sync.
+        </p>
+        <div className="card p-4 space-y-5">
+          <SelectGroup
+            icon={<FolderKanban size={13} />} title="Projects" items={projects}
+            onToggle={toggleInterest} busy={busy} empty="No projects yet."
+          />
+          <SelectGroup
+            icon={<Layers size={13} />} title="Content" items={contents}
+            onToggle={toggleInterest} busy={busy} empty="No content interests."
+          />
+          <SelectGroup
+            icon={<FileText size={13} />} title="Note folders" items={folders}
+            onToggle={toggleFolder} busy={busy} empty="No note folders."
+          />
+        </div>
+      </section>
 
       {/* Conflicts */}
       <section className="space-y-4">
