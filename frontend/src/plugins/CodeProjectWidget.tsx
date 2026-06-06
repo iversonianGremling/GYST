@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Code2, KeyRound, Link2, FileText, CircleDot, GitPullRequest, GitCommit,
   ExternalLink, Star, Check, Settings2, RefreshCw,
+  ArrowLeft, Plus, MessageSquare, CheckCircle2, Send,
 } from 'lucide-react'
 import { api } from '@/api/client'
 
@@ -15,8 +16,88 @@ interface Overview {
 interface Issue { number: number; title: string; labels: string[]; comments: number; html_url: string; user: string; updated_at: string }
 interface Pull { number: number; title: string; user: string; html_url: string; draft: boolean }
 interface Commit { sha: string; message: string; author: string; date: string; html_url: string }
+interface IssueComment { user: string; body: string; created_at: string }
+interface IssueFull {
+  number: number; title: string; body: string; state: string; user: string
+  labels: string[]; html_url: string; comments: IssueComment[]
+}
 
 type Tab = 'overview' | 'issues' | 'pulls' | 'activity'
+
+/* ── Issue detail (two-way) ──────────────────────────────────────────────── */
+function IssueDetail({ interestId, number, onBack, onChanged }: {
+  interestId: string; number: number; onBack: () => void; onChanged: () => void
+}) {
+  const base = `/plugins/code-project`
+  const [issue, setIssue] = useState<IssueFull | null>(null)
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    api.get<IssueFull>(`${base}/issue/${interestId}/${number}`).then(setIssue)
+  }, [base, interestId, number])
+  useEffect(() => { load() }, [load])
+
+  const addComment = async () => {
+    if (!comment.trim()) return
+    setBusy(true)
+    try { await api.post(`${base}/issue/${interestId}/${number}/comment`, { body: comment }); setComment(''); load() }
+    finally { setBusy(false) }
+  }
+  const toggleState = async () => {
+    if (!issue) return
+    setBusy(true)
+    try {
+      await api.patch(`${base}/issue/${interestId}/${number}`, { state: issue.state === 'open' ? 'closed' : 'open' })
+      load(); onChanged()
+    } finally { setBusy(false) }
+  }
+
+  if (!issue) return <p className="text-sm text-text-3">Loading…</p>
+  const open = issue.state === 'open'
+
+  return (
+    <div className="space-y-3">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-text-3 hover:text-accent">
+        <ArrowLeft size={13} /> Back to issues
+      </button>
+      <div className="card p-4 space-y-3">
+        <div className="flex items-start gap-2">
+          {open ? <CircleDot size={17} className="text-green-500 mt-0.5" /> : <CheckCircle2 size={17} className="text-purple-400 mt-0.5" />}
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-text-1">{issue.title} <span className="text-text-3">#{issue.number}</span></div>
+            <div className="text-xs text-text-3">{issue.user} · {open ? 'open' : 'closed'}{issue.labels.length ? ' · ' + issue.labels.join(', ') : ''}</div>
+          </div>
+          <a href={issue.html_url} target="_blank" rel="noreferrer" className="text-text-3 hover:text-accent"><ExternalLink size={14} /></a>
+        </div>
+        {issue.body && <pre className="text-sm text-text-1 whitespace-pre-wrap break-words font-sans m-0">{issue.body}</pre>}
+      </div>
+
+      {issue.comments.map((c, i) => (
+        <div key={i} className="card p-3">
+          <div className="text-xs text-text-3 mb-1">{c.user} · {c.created_at ? new Date(c.created_at).toLocaleString() : ''}</div>
+          <pre className="text-sm text-text-1 whitespace-pre-wrap break-words font-sans m-0">{c.body}</pre>
+        </div>
+      ))}
+
+      <div className="card p-3 space-y-2">
+        <textarea
+          value={comment} onChange={(e) => setComment(e.target.value)} rows={3}
+          placeholder="Leave a comment…"
+          className="w-full bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+        />
+        <div className="flex items-center gap-2">
+          <button onClick={addComment} disabled={busy || !comment.trim()} className="btn-primary text-sm flex items-center gap-1 disabled:opacity-50">
+            <Send size={13} /> Comment
+          </button>
+          <button onClick={toggleState} disabled={busy} className="btn-ghost text-sm flex items-center gap-1 ml-auto">
+            {open ? <CheckCircle2 size={14} /> : <CircleDot size={14} />} {open ? 'Close issue' : 'Reopen'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 /* ── Token setup ─────────────────────────────────────────────────────────── */
 function TokenSetup({ onSaved }: { onSaved: (s: Settings) => void }) {
@@ -116,6 +197,10 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
   const [commits, setCommits] = useState<Commit[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [selIssue, setSelIssue] = useState<number | null>(null)
+  const [newIssue, setNewIssue] = useState(false)
+  const [niTitle, setNiTitle] = useState('')
+  const [niBody, setNiBody] = useState('')
 
   const init = useCallback(async () => {
     const s = await api.get<Settings>('/plugins/code-project/settings')
@@ -140,6 +225,11 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
 
   const resetToken = async () => { await api.del('/plugins/code-project/settings'); setSettings({ configured: false, login: null }); setLink(null) }
   const unlink = async () => { await api.del(`/plugins/code-project/link/${interestId}`); setLink({}) }
+  const createIssue = async () => {
+    if (!niTitle.trim()) return
+    await api.post(`/plugins/code-project/issues/${interestId}`, { title: niTitle, body: niBody })
+    setNewIssue(false); setNiTitle(''); setNiBody(''); loadTab('issues')
+  }
 
   if (!settings) return <div className="text-text-3 text-sm">Loading…</div>
   if (!settings.configured) return <TokenSetup onSaved={(s) => { setSettings(s); init() }} />
@@ -167,7 +257,7 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
       <div className="flex items-center gap-2 flex-wrap border-b border-bg-3 pb-2">
         {TABS.map(({ id, label, Icon }) => (
           <button
-            key={id} onClick={() => setTab(id)}
+            key={id} onClick={() => { setTab(id); setSelIssue(null); setNewIssue(false) }}
             className={`flex items-center gap-1.5 text-sm px-2.5 py-1 rounded-md transition-colors ${
               tab === id ? 'text-accent bg-accent/10' : 'text-text-2 hover:text-accent'
             }`}
@@ -199,21 +289,53 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
         </div>
       )}
 
-      {tab === 'issues' && !loading && (
-        <div className="card divide-y divide-bg-3">
-          {issues.length === 0 ? <p className="text-sm text-text-3 p-4 text-center">No open issues.</p> :
-            issues.map((i) => (
-              <a key={i.number} href={i.html_url} target="_blank" rel="noreferrer" className="flex items-start gap-2 p-3 hover:bg-bg-2">
-                <CircleDot size={15} className="text-green-500 mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <div className="text-sm text-text-1">{i.title} <span className="text-text-3">#{i.number}</span></div>
-                  <div className="text-xs text-text-3">
-                    {i.user}{i.labels.length ? ' · ' + i.labels.join(', ') : ''}{i.comments ? ` · ${i.comments} comments` : ''}
-                  </div>
-                </div>
-              </a>
-            ))}
-        </div>
+      {tab === 'issues' && (
+        selIssue !== null ? (
+          <IssueDetail
+            interestId={interestId} number={selIssue}
+            onBack={() => { setSelIssue(null); loadTab('issues') }}
+            onChanged={() => loadTab('issues')}
+          />
+        ) : (
+          <div className="space-y-3">
+            <div className="flex">
+              <button onClick={() => setNewIssue((v) => !v)} className="btn-primary text-sm flex items-center gap-1 ml-auto">
+                <Plus size={14} /> New issue
+              </button>
+            </div>
+            {newIssue && (
+              <div className="card p-3 space-y-2">
+                <input
+                  value={niTitle} onChange={(e) => setNiTitle(e.target.value)} placeholder="Issue title"
+                  className="w-full bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+                />
+                <textarea
+                  value={niBody} onChange={(e) => setNiBody(e.target.value)} rows={4} placeholder="Description (optional, markdown)"
+                  className="w-full bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+                />
+                <button onClick={createIssue} disabled={!niTitle.trim()} className="btn-primary text-sm disabled:opacity-50">
+                  Create on GitHub
+                </button>
+              </div>
+            )}
+            {!loading && (
+              <div className="card divide-y divide-bg-3">
+                {issues.length === 0 ? <p className="text-sm text-text-3 p-4 text-center">No open issues.</p> :
+                  issues.map((i) => (
+                    <button key={i.number} onClick={() => setSelIssue(i.number)} className="flex items-start gap-2 p-3 hover:bg-bg-2 w-full text-left">
+                      <CircleDot size={15} className="text-green-500 mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-sm text-text-1">{i.title} <span className="text-text-3">#{i.number}</span></div>
+                        <div className="text-xs text-text-3">
+                          {i.user}{i.labels.length ? ' · ' + i.labels.join(', ') : ''}{i.comments ? ` · ${i.comments} comments` : ''}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
+        )
       )}
 
       {tab === 'pulls' && !loading && (

@@ -56,18 +56,19 @@ async def _token(session: AsyncSession) -> str | None:
 
 # ── GitHub API ───────────────────────────────────────────────────────────────
 
-async def _gh(token: str, path: str, *, accept: str = "application/vnd.github+json",
-              params: dict | None = None) -> httpx.Response:
+async def _gh(token: str, path: str, *, method: str = "GET",
+              accept: str = "application/vnd.github+json",
+              params: dict | None = None, json: dict | None = None) -> httpx.Response:
     async with httpx.AsyncClient(timeout=20.0) as cli:
-        return await cli.get(
-            f"{GH}{path}",
+        return await cli.request(
+            method, f"{GH}{path}",
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": accept,
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": "GYST/0.1",
             },
-            params=params,
+            params=params, json=json,
         )
 
 
@@ -255,3 +256,79 @@ def register_routes(router: APIRouter) -> None:
                 "html_url": c.get("html_url"),
             })
         return out
+
+    # ── Two-way issues: write-through to GitHub (P2.D) ───────────────────────
+
+    @router.post("/issues/{interest_id}", status_code=201)
+    async def create_issue(
+        interest_id: str, body: dict[str, Any],
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        token, owner, repo = await _require_link(session, interest_id)
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "title required")
+        r = await _gh(token, f"/repos/{owner}/{repo}/issues", method="POST",
+                      json={"title": title, "body": body.get("body", "")})
+        if r.status_code != 201:
+            raise HTTPException(r.status_code, f"create failed: {r.text[:120]}")
+        i = r.json()
+        return {"number": i["number"], "title": i["title"], "html_url": i["html_url"]}
+
+    @router.get("/issue/{interest_id}/{number}")
+    async def get_issue(
+        interest_id: str, number: int,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        token, owner, repo = await _require_link(session, interest_id)
+        r = await _gh(token, f"/repos/{owner}/{repo}/issues/{number}")
+        if r.status_code != 200:
+            raise HTTPException(r.status_code, "issue fetch failed")
+        i = r.json()
+        cr = await _gh(token, f"/repos/{owner}/{repo}/issues/{number}/comments",
+                       params={"per_page": 100})
+        comments = [
+            {"user": c.get("user", {}).get("login"), "body": c.get("body", ""),
+             "created_at": c.get("created_at")}
+            for c in (cr.json() if cr.status_code == 200 else [])
+        ]
+        return {
+            "number": i["number"], "title": i["title"], "body": i.get("body") or "",
+            "state": i["state"], "user": i.get("user", {}).get("login"),
+            "labels": [l["name"] for l in i.get("labels", [])],
+            "html_url": i["html_url"], "comments": comments,
+        }
+
+    @router.patch("/issue/{interest_id}/{number}")
+    async def edit_issue(
+        interest_id: str, number: int, body: dict[str, Any],
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        token, owner, repo = await _require_link(session, interest_id)
+        patch = {k: body[k] for k in ("title", "body", "state") if k in body}
+        if patch.get("state") not in (None, "open", "closed"):
+            raise HTTPException(400, "state must be open or closed")
+        r = await _gh(token, f"/repos/{owner}/{repo}/issues/{number}",
+                      method="PATCH", json=patch)
+        if r.status_code != 200:
+            raise HTTPException(r.status_code, f"edit failed: {r.text[:120]}")
+        return {"ok": True, "state": r.json().get("state")}
+
+    @router.post("/issue/{interest_id}/{number}/comment", status_code=201)
+    async def comment_issue(
+        interest_id: str, number: int, body: dict[str, Any],
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        token, owner, repo = await _require_link(session, interest_id)
+        text = (body.get("body") or "").strip()
+        if not text:
+            raise HTTPException(400, "comment body required")
+        r = await _gh(token, f"/repos/{owner}/{repo}/issues/{number}/comments",
+                      method="POST", json={"body": text})
+        if r.status_code != 201:
+            raise HTTPException(r.status_code, f"comment failed: {r.text[:120]}")
+        return {"ok": True}
