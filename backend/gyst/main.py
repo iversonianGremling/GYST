@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -18,7 +18,6 @@ logging.basicConfig(level=logging.DEBUG if settings.server.debug else logging.IN
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    plugin_loader.discover()
     scheduler.start()
 
     yield
@@ -77,6 +76,16 @@ app.include_router(sync_router.router,      prefix=API)
 @app.get("/api/v1/health", tags=["meta"])
 async def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+# Discover plugins and mount their backend routes at /api/v1/plugins/<id>/...
+# (done at import time so the routes are part of the app, not added during the
+# lifespan startup where they wouldn't be picked up).
+plugin_loader.discover()
+_plugin_router = APIRouter(prefix="/plugins")
+for _p in plugin_loader.get_all():
+    _p.register_routes(_plugin_router)
+app.include_router(_plugin_router, prefix=API)
 
 
 # Serve frontend static files in production (frontend/dist/)
