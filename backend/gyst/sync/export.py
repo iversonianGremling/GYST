@@ -120,6 +120,12 @@ async def export_all(session: AsyncSession) -> dict:
 
     synced_notes = [n for n in notes if _note_synced(n)]
 
+    def _note_repo(n: Note) -> str:
+        meta = interest_by_id.get(n.interest_id) if n.interest_id else None
+        if meta and meta["is_project"]:
+            return vault.project_repo(meta["slug"])
+        return vault.PERSONAL_REPO
+
     # Which repos will we touch? A repo per synced project; personal if it has
     # content interests or loose synced notes.
     repos: set[str] = set()
@@ -131,8 +137,16 @@ async def export_all(session: AsyncSession) -> dict:
     if any(not n.interest_id for n in synced_notes):
         repos.add(vault.PERSONAL_REPO)
 
-    # Reset managed paths in every repo we're about to (re)write.
+    # Freeze repos holding an open conflict: don't reset/rewrite/commit them, so
+    # neither side is clobbered until the user resolves it in-app (Phase 4).
+    frozen = {_note_repo(n) for n in synced_notes if n.sync_status == "conflicted"}
+    if frozen:
+        log.info("vault export: freezing repos with open conflicts: %s", sorted(frozen))
+
+    # Reset managed paths in every (non-frozen) repo we're about to (re)write.
     for repo in repos:
+        if repo in frozen:
+            continue
         repo_dir = vault.VAULT_ROOT / repo
         repo_dir.mkdir(parents=True, exist_ok=True)
         _reset_managed(repo_dir)
@@ -143,6 +157,8 @@ async def export_all(session: AsyncSession) -> dict:
     # _index.md for each sync-enabled interest/project
     for i in enabled_interests:
         is_project = i.id in projects
+        if (vault.project_repo(i.slug) if is_project else vault.PERSONAL_REPO) in frozen:
+            continue
         proj = project_settings.get(i.id)
         fm = vault.interest_frontmatter(
             gyst_id=i.id,
@@ -161,8 +177,10 @@ async def export_all(session: AsyncSession) -> dict:
         _write(target, vault.dump(fm, body))
         n_index += 1
 
-    # one file per synced note
+    # one file per synced note (skip notes in frozen/conflicted repos)
     for n in synced_notes:
+        if _note_repo(n) in frozen:
+            continue
         meta = interest_by_id.get(n.interest_id) if n.interest_id else None
         fm = vault.note_frontmatter(
             gyst_id=n.id,
@@ -199,9 +217,11 @@ async def export_all(session: AsyncSession) -> dict:
         )
     await session.commit()
 
-    # init + commit each repo
+    # init + commit each (non-frozen) repo
     commits: dict[str, str | None] = {}
     for repo in sorted(repos):
+        if repo in frozen:
+            continue
         repo_dir = vault.VAULT_ROOT / repo
         # Skip an empty personal repo (no content interests, no loose notes)
         if repo == vault.PERSONAL_REPO and not any(
@@ -217,6 +237,7 @@ async def export_all(session: AsyncSession) -> dict:
         "interests": n_index,
         "notes": n_notes,
         "commits": commits,
+        "frozen": sorted(frozen),
     }
     log.info("vault export: %s", summary)
     return summary

@@ -18,10 +18,30 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gyst.core.models import Interest, Note
+from gyst.core.models import Interest, Note, SyncConflict
 from gyst.sync import vault
 
 log = logging.getLogger("gyst.sync.importer")
+
+
+async def _upsert_conflict(
+    session: AsyncSession, note: Note, theirs_title: str, theirs_body: str, theirs_hash: str,
+) -> None:
+    """One open conflict per note. Snapshot ``ours`` once (stable for display);
+    refresh ``theirs`` as the incoming side keeps changing."""
+    row = await session.execute(
+        select(SyncConflict).where(
+            SyncConflict.note_id == note.id, SyncConflict.status == "open",
+        )
+    )
+    c = row.scalar_one_or_none()
+    if c is None:
+        session.add(SyncConflict(
+            note_id=note.id, ours_title=note.title, ours_body=note.body_md,
+            theirs_title=theirs_title, theirs_body=theirs_body, theirs_hash=theirs_hash,
+        ))
+    else:
+        c.theirs_title, c.theirs_body, c.theirs_hash = theirs_title, theirs_body, theirs_hash
 
 
 def _iter_md(repo_dir: Path):
@@ -78,10 +98,11 @@ async def import_repo(session: AsyncSession, repo_dir: Path, *, repo_slug: str) 
             skipped += 1   # GYST's own last write — not a desktop edit
             continue
 
-        # Both sides changed since last sync → don't clobber the GYST edit.
-        # Park it as a conflict for the Phase 4 resolver (export skips conflicted
-        # notes, so neither version is lost).
-        if note.sync_status == "dirty":
+        # Both sides changed (GYST edit pending, or already conflicted) → record
+        # the conflict and never clobber. The repo is frozen by export until the
+        # user resolves it in-app; neither version is lost.
+        if note.sync_status in ("dirty", "conflicted"):
+            await _upsert_conflict(session, note, title, body, h)
             note.sync_status = "conflicted"
             conflicted += 1
             continue

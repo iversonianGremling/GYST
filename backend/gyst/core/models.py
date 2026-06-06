@@ -258,3 +258,21 @@ class PluginSetting(Base):
     plugin_id: Mapped[str] = mapped_column(String, nullable=False)
     key: Mapped[str] = mapped_column(String, nullable=False)
     value: Mapped[Any] = mapped_column(JSON)
+
+
+# ---------------------------------------------------------------------------
+# Vault sync conflicts (Part I, Phase 4)
+# ---------------------------------------------------------------------------
+
+class SyncConflict(Base):
+    __tablename__ = "sync_conflict"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    note_id: Mapped[str] = mapped_column(ForeignKey("note.id", ondelete="CASCADE"))
+    ours_title: Mapped[str] = mapped_column(String, default="")    # GYST/local version
+    ours_body: Mapped[str] = mapped_column(Text, default="")
+    theirs_title: Mapped[str] = mapped_column(String, default="")  # incoming/desktop version
+    theirs_body: Mapped[str] = mapped_column(Text, default="")
+    theirs_hash: Mapped[str] = mapped_column(String, default="")   # incoming file content hash
+    status: Mapped[str] = mapped_column(String, default="open")    # open|resolved
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
