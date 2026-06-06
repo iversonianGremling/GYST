@@ -23,8 +23,9 @@ log = logging.getLogger("gyst.sync.export")
 _MANAGED = ("_index.md", "notes", "content")
 
 
-async def _folder_paths(session: AsyncSession) -> dict[str, str]:
-    """folder_id -> slugified ``parent/child`` path."""
+async def _folders(session: AsyncSession) -> tuple[dict[str, str], dict[str, bool]]:
+    """Returns ``(path_map, sync_map)``: folder_id -> slugified path, and
+    folder_id -> sync_enabled."""
     folders = (await session.execute(select(Folder))).scalars().all()
     by_id = {f.id: f for f in folders}
 
@@ -38,7 +39,8 @@ async def _folder_paths(session: AsyncSession) -> dict[str, str]:
             fid = f.parent_id
         return "/".join(reversed(parts))
 
-    return {f.id: path(f.id) for f in folders}
+    return ({f.id: path(f.id) for f in folders},
+            {f.id: f.sync_enabled for f in folders})
 
 
 async def _note_tags(session: AsyncSession) -> dict[str, list[str]]:
@@ -77,19 +79,38 @@ async def export_all(session: AsyncSession) -> dict:
         p.interest_id: p for p in (await session.execute(select(Project))).scalars().all()
     }
     notes = (await session.execute(select(Note))).scalars().all()
-    folder_path = await _folder_paths(session)
+    folder_path, folder_sync = await _folders(session)
     tags = await _note_tags(session)
 
     interest_by_id = {
-        i.id: {"slug": i.slug, "is_project": i.id in projects, "kind": i.kind}
+        i.id: {"slug": i.slug, "is_project": i.id in projects, "kind": i.kind,
+               "sync": i.sync_enabled}
         for i in interests
     }
 
-    # Which repos will we touch? Always include personal; a repo per project.
-    repos: set[str] = {vault.PERSONAL_REPO}
-    for i in interests:
+    # Selection (docs/vault-sync.md §3): only sync-enabled interests materialize.
+    enabled_interests = [i for i in interests if i.sync_enabled]
+
+    def _note_synced(n: Note) -> bool:
+        meta = interest_by_id.get(n.interest_id) if n.interest_id else None
+        if meta and meta["sync"]:
+            return True                       # belongs to a synced interest
+        if not n.interest_id and n.folder_id and folder_sync.get(n.folder_id):
+            return True                       # loose note in a synced folder
+        return False
+
+    synced_notes = [n for n in notes if _note_synced(n)]
+
+    # Which repos will we touch? A repo per synced project; personal if it has
+    # content interests or loose synced notes.
+    repos: set[str] = set()
+    for i in enabled_interests:
         if i.id in projects:
             repos.add(vault.project_repo(i.slug))
+        else:
+            repos.add(vault.PERSONAL_REPO)
+    if any(not n.interest_id for n in synced_notes):
+        repos.add(vault.PERSONAL_REPO)
 
     # Reset managed paths in every repo we're about to (re)write.
     for repo in repos:
@@ -99,8 +120,8 @@ async def export_all(session: AsyncSession) -> dict:
 
     n_index = n_notes = 0
 
-    # _index.md for each interest/project
-    for i in interests:
+    # _index.md for each sync-enabled interest/project
+    for i in enabled_interests:
         is_project = i.id in projects
         proj = project_settings.get(i.id)
         fm = vault.interest_frontmatter(
@@ -120,8 +141,8 @@ async def export_all(session: AsyncSession) -> dict:
         _write(target, vault.dump(fm, body))
         n_index += 1
 
-    # one file per note
-    for n in notes:
+    # one file per synced note
+    for n in synced_notes:
         meta = interest_by_id.get(n.interest_id) if n.interest_id else None
         fm = vault.note_frontmatter(
             gyst_id=n.id,

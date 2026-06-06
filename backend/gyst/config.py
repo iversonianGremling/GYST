@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     plugins: _Plugins = _Plugins()
     recs: _Recs = _Recs()
     scheduler: _Scheduler = _Scheduler()
+    gitea: dict[str, Any] = _toml.get("gitea", {})   # url, token, org (vault sync)
 
 
 settings = Settings()

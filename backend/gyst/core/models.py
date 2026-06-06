@@ -61,6 +61,7 @@ class Folder(Base):
     entity_type: Mapped[str] = mapped_column(String, nullable=False)  # "content" | "project" | "note"
     color: Mapped[str | None] = mapped_column(String)   # hex, e.g. "#6366f1"
     position: Mapped[int] = mapped_column(Integer, default=0)
+    sync_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # materialize to vault
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     children: Mapped[list["Folder"]] = relationship(
@@ -84,6 +85,7 @@ class Interest(Base):
     cover_settings: Mapped[dict | None] = mapped_column(JSON)
     folder_id: Mapped[str | None] = mapped_column(ForeignKey("folder.id", ondelete="SET NULL"))
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    sync_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # materialize to vault
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -123,6 +125,11 @@ class Note(Base):
     cover_settings: Mapped[dict | None] = mapped_column(JSON)
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     body_md: Mapped[str] = mapped_column(Text, default="")
+    # Vault sync-state (docs/vault-sync.md §4.1/§6)
+    vault_path: Mapped[str | None] = mapped_column(String)
+    last_synced_hash: Mapped[str | None] = mapped_column(String)
+    last_synced_commit: Mapped[str | None] = mapped_column(String)
+    sync_status: Mapped[str] = mapped_column(String, default="clean")  # clean|dirty|conflicted
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 

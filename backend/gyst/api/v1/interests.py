@@ -46,6 +46,7 @@ class InterestPatch(BaseModel):
     cover_settings: dict[str, Any] | None = None
     folder_id: str | None = None
     archived: bool | None = None
+    sync_enabled: bool | None = None
 
 
 def _out(i: Interest) -> dict[str, Any]:
@@ -59,6 +60,7 @@ def _out(i: Interest) -> dict[str, Any]:
         "cover_settings": i.cover_settings or _DEFAULT_COVER_SETTINGS,
         "folder_id": i.folder_id,
         "archived": i.archived,
+        "sync_enabled": i.sync_enabled,
         "created_at": i.created_at.isoformat(),
         "updated_at": i.updated_at.isoformat(),
     }

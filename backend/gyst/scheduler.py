@@ -24,6 +24,16 @@ async def _run_feed_fetch() -> None:
         log.error("Scheduler feed.fetch error: %s", e)
 
 
+async def _run_vault_sync() -> None:
+    from gyst.sync.service import sync_all
+    try:
+        s = await sync_all()
+        if any(v for v in s.get("commits", {}).values()):
+            log.info("Scheduler: vault sync %s", s.get("pushed"))
+    except Exception as e:
+        log.error("Scheduler vault sync error: %s", e)
+
+
 def start() -> AsyncIOScheduler:
     global _scheduler
     if _scheduler and _scheduler.running:
@@ -47,8 +57,19 @@ def start() -> AsyncIOScheduler:
         misfire_grace_time=60,
     )
 
+    # Vault sync (push GYST -> Gitea). Cheap no-op when nothing is sync-enabled.
+    sync_minutes = int((settings.gitea or {}).get("sync_interval_minutes", 5))
+    _scheduler.add_job(
+        _run_vault_sync,
+        trigger=IntervalTrigger(minutes=sync_minutes),
+        id="vault_sync",
+        replace_existing=True,
+        misfire_grace_time=60,
+    )
+
     _scheduler.start()
-    log.info("Scheduler started (feed.fetch every %d min)", minutes)
+    log.info("Scheduler started (feed.fetch every %d min, vault_sync every %d min)",
+             minutes, sync_minutes)
     return _scheduler
 
 

@@ -24,6 +24,7 @@ def _out(f: Folder) -> dict[str, Any]:
         "entity_type": f.entity_type,
         "color": f.color,
         "position": f.position,
+        "sync_enabled": f.sync_enabled,
         "created_at": f.created_at.isoformat(),
     }
 
@@ -41,6 +42,7 @@ class FolderPatch(BaseModel):
     parent_id: str | None = None
     color: str | None = None
     position: int | None = None
+    sync_enabled: bool | None = None
 
 
 @router.get("")

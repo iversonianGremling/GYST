@@ -57,3 +57,44 @@ def commit_all(repo: Path, message: str) -> str | None:
 def head(repo: Path) -> str | None:
     r = _run(repo, "rev-parse", "HEAD", check=False)
     return r.stdout.strip() if r.returncode == 0 else None
+
+
+# ── Remotes / push / pull ────────────────────────────────────────────────────
+#
+# Auth is injected per-call as an HTTP Authorization header via `-c
+# http.extraheader=...`, so the token is never persisted in `.git/config` or the
+# remote URL on disk (docs/vault-sync.md §4.3).
+
+def _auth_args(token: str | None) -> list[str]:
+    return ["-c", f"http.extraheader=Authorization: token {token}"] if token else []
+
+
+def set_remote(repo: Path, url: str, name: str = "origin") -> None:
+    existing = _run(repo, "remote", check=False).stdout.split()
+    if name in existing:
+        _run(repo, "remote", "set-url", name, url)
+    else:
+        _run(repo, "remote", "add", name, url)
+
+
+def push(repo: Path, url: str, *, token: str | None = None,
+         branch: str = "main", name: str = "origin") -> None:
+    set_remote(repo, url, name)
+    _run(repo, *_auth_args(token), "push", "-u", name, f"HEAD:refs/heads/{branch}")
+
+
+def pull(repo: Path, url: str, *, token: str | None = None,
+         branch: str = "main", name: str = "origin") -> subprocess.CompletedProcess:
+    set_remote(repo, url, name)
+    # --no-edit keeps merges non-interactive; caller inspects returncode for conflicts.
+    return _run(repo, *_auth_args(token), "pull", "--no-edit", name, branch, check=False)
+
+
+def setup_lfs(repo: Path, patterns: tuple[str, ...] = ("media/**",)) -> None:
+    """Track media via git-lfs. No-op-safe if git-lfs isn't installed (returns
+    without raising so non-media repos keep working)."""
+    if _run(repo, "lfs", "version", check=False).returncode != 0:
+        return
+    _run(repo, "lfs", "install", "--local")
+    for p in patterns:
+        _run(repo, "lfs", "track", p)
