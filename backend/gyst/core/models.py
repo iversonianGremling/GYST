@@ -264,6 +264,29 @@ class PluginSetting(Base):
 # Vault sync conflicts (Part I, Phase 4)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Research references (Part II — research-project plugin)
+# ---------------------------------------------------------------------------
+
+class Reference(Base):
+    __tablename__ = "reference"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    interest_id: Mapped[str] = mapped_column(ForeignKey("interest.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String, default="article")  # article|book|web|...
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    authors: Mapped[list] = mapped_column(JSON, default=list)      # list[str]
+    year: Mapped[int | None] = mapped_column(Integer)
+    doi: Mapped[str | None] = mapped_column(String)
+    url: Mapped[str | None] = mapped_column(String)
+    bibtex: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[list] = mapped_column(JSON, default=list)         # list[str]
+    status: Mapped[str] = mapped_column(String, default="queued")  # queued|reading|done
+    note: Mapped[str | None] = mapped_column(Text)                 # quick annotation
+    source_app: Mapped[str | None] = mapped_column(String)         # manual|doi|bibtex|linkwarden|wallabag
+    external_id: Mapped[str | None] = mapped_column(String)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class SyncConflict(Base):
     __tablename__ = "sync_conflict"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

@@ -1,0 +1,11 @@
+{
+  "id": "research-project",
+  "name": "Research Project",
+  "version": "0.1.0",
+  "backend": "backend.py",
+  "widget": "ResearchProjectWidget",
+  "hooks": [],
+  "ui_slots": ["interest.project"],
+  "project_types": ["research"],
+  "permissions": []
+}
