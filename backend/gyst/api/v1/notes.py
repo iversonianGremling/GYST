@@ -133,6 +133,10 @@ async def patch_note(
         n.slug = _slugify(body["title"])
     if "body_md" in body:
         await _sync_wikilinks(n, session)
+    # Mark unsynced local edit so the vault importer won't silently clobber it
+    # with a concurrent desktop edit (it flags a conflict instead).
+    if any(f in body for f in ("title", "body_md")):
+        n.sync_status = "dirty"
     await session.commit()
     await session.refresh(n)
     return _out(n)

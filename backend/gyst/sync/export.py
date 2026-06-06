@@ -11,7 +11,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gyst.core.models import Folder, Interest, Note, Project, Tag, Tagging
@@ -54,6 +54,25 @@ async def _note_tags(session: AsyncSession) -> dict[str, list[str]]:
     for target_id, name in rows:
         out.setdefault(target_id, []).append(name)
     return {k: sorted(v) for k, v in out.items()}
+
+
+async def synced_repo_slugs(session: AsyncSession) -> set[str]:
+    """Repo dir names that are currently sync-enabled — the gate for both export
+    and inbound import, so stale/unselected repos on disk are never touched."""
+    interests = (await session.execute(select(Interest))).scalars().all()
+    projects = {p.interest_id for p in (await session.execute(select(Project))).scalars().all()}
+    notes = (await session.execute(select(Note))).scalars().all()
+    _, folder_sync = await _folders(session)
+
+    repos: set[str] = set()
+    for i in interests:
+        if not i.sync_enabled:
+            continue
+        repos.add(vault.project_repo(i.slug) if i.id in projects else vault.PERSONAL_REPO)
+    for n in notes:
+        if not n.interest_id and n.folder_id and folder_sync.get(n.folder_id):
+            repos.add(vault.PERSONAL_REPO)
+    return repos
 
 
 def _reset_managed(repo_dir: Path) -> None:
@@ -119,6 +138,7 @@ async def export_all(session: AsyncSession) -> dict:
         _reset_managed(repo_dir)
 
     n_index = n_notes = 0
+    state: list[tuple] = []   # (note_id, content_hash, vault_path, updated_at)
 
     # _index.md for each sync-enabled interest/project
     for i in enabled_interests:
@@ -161,8 +181,23 @@ async def export_all(session: AsyncSession) -> dict:
             interest_is_project=bool(meta and meta["is_project"]),
             folder_path=folder_path.get(n.folder_id) if n.folder_id else None,
         )
-        _write(target, vault.dump(fm, n.body_md))
+        text = vault.dump(fm, n.body_md)
+        _write(target, text)
+        # Origin-tag: record what we wrote so the importer can tell GYST's own
+        # writes from genuine desktop edits (docs/vault-sync.md §4.1).
+        state.append((n.id, vault.content_hash(text), f"{target.repo}/{target.relpath}", n.updated_at))
         n_notes += 1
+
+    # Persist sync-state WITHOUT touching updated_at. Writing it through the ORM
+    # would fire the note's onupdate=_now, bumping updated_at — which lives in the
+    # frontmatter, so every export would change the file and churn a commit each
+    # tick. Pin updated_at to its current value to break that loop.
+    for nid, h, vpath, ts in state:
+        await session.execute(
+            sa_update(Note).where(Note.id == nid)
+            .values(last_synced_hash=h, vault_path=vpath, updated_at=ts, sync_status="clean")
+        )
+    await session.commit()
 
     # init + commit each repo
     commits: dict[str, str | None] = {}
