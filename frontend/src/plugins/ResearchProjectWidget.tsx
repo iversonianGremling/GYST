@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { BookOpen, ListChecks, Plus, Trash2, Download, Upload, ExternalLink, X } from 'lucide-react'
+import { BookOpen, ListChecks, Plus, Trash2, Download, Upload, ExternalLink, X, Link2, Settings2 } from 'lucide-react'
 import { api } from '@/api/client'
 
 interface Reference {
@@ -63,9 +63,27 @@ export default function ResearchProjectWidget(props: Record<string, unknown>) {
   const [err, setErr] = useState<string | null>(null)
   const [showImport, setShowImport] = useState(false)
   const [bibtex, setBibtex] = useState('')
+  const [imp, setImp] = useState<{ linkwarden: boolean; wallabag: boolean }>({ linkwarden: false, wallabag: false })
+  const [showWb, setShowWb] = useState(false)
+  const [wb, setWb] = useState({ url: '', client_id: '', client_secret: '', username: '', password: '' })
+  const [impMsg, setImpMsg] = useState<string | null>(null)
 
-  const load = useCallback(() => { api.get<Reference[]>(base).then(setRefs) }, [base])
+  const load = useCallback(() => {
+    api.get<Reference[]>(base).then(setRefs)
+    api.get<{ linkwarden: boolean; wallabag: boolean }>('/plugins/research-project/import/status').then(setImp).catch(() => {})
+    api.get<{ url: string; client_id: string; username: string }>('/plugins/research-project/wallabag-settings')
+      .then((s) => setWb((w) => ({ ...w, url: s.url, client_id: s.client_id, username: s.username }))).catch(() => {})
+  }, [base])
   useEffect(() => { load() }, [load])
+
+  const importFrom = async (src: 'linkwarden' | 'wallabag') => {
+    setImpMsg('Importing…')
+    try {
+      const r = await api.post<{ imported: number }>(`/plugins/research-project/import/${src}/${interestId}`, {})
+      setImpMsg(`Imported ${r.imported} from ${src}.`); load()
+    } catch (e) { setImpMsg((e as Error).message) }
+  }
+  const saveWb = async () => { await api.put('/plugins/research-project/wallabag-settings', wb); setShowWb(false); load() }
 
   const add = async () => {
     if (!doi.trim() && !title.trim()) return
@@ -159,6 +177,48 @@ export default function ResearchProjectWidget(props: Record<string, unknown>) {
           <button onClick={importBib} disabled={busy || !bibtex.trim()} className="btn-primary text-sm disabled:opacity-50">
             Import
           </button>
+        </div>
+      )}
+
+      {/* import from apps */}
+      <div className="flex items-center gap-2 text-xs flex-wrap">
+        <span className="text-text-3">Import from:</span>
+        <button
+          onClick={() => importFrom('linkwarden')} disabled={!imp.linkwarden}
+          className="flex items-center gap-1 px-2 py-1 rounded border border-bg-3 hover:bg-bg-3 disabled:opacity-40"
+          title={imp.linkwarden ? '' : 'Configure the Linkwarden plugin first'}
+        >
+          <Link2 size={12} /> Linkwarden{!imp.linkwarden && ' (set up)'}
+        </button>
+        <button
+          onClick={() => (imp.wallabag ? importFrom('wallabag') : setShowWb(true))}
+          className="flex items-center gap-1 px-2 py-1 rounded border border-bg-3 hover:bg-bg-3"
+        >
+          <Link2 size={12} /> Wallabag{!imp.wallabag && ' (set up)'}
+        </button>
+        <button onClick={() => setShowWb((v) => !v)} className="text-text-3 hover:text-accent p-1" title="Wallabag settings">
+          <Settings2 size={13} />
+        </button>
+        {impMsg && <span className="text-text-3">{impMsg}</span>}
+      </div>
+
+      {showWb && (
+        <div className="card p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-text-2">Wallabag connection</span>
+            <button onClick={() => setShowWb(false)} className="text-text-3"><X size={14} /></button>
+          </div>
+          {(['url', 'client_id', 'client_secret', 'username', 'password'] as const).map((k) => (
+            <input
+              key={k} value={(wb as Record<string, string>)[k]}
+              onChange={(e) => setWb((w) => ({ ...w, [k]: e.target.value }))}
+              type={k === 'password' || k === 'client_secret' ? 'password' : 'text'}
+              placeholder={k === 'url' ? 'https://wallabag.lan' : k.replace('_', ' ')}
+              className="w-full bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+            />
+          ))}
+          <button onClick={saveWb} className="btn-primary text-sm">Save</button>
+          <p className="text-xs text-text-3">Create an API client in Wallabag → Developer → Create a new client.</p>
         </div>
       )}
 
