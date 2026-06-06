@@ -27,6 +27,8 @@ class _LoadedPlugin:
         self.name: str = manifest["name"]
         self.hooks: list[str] = manifest.get("hooks", [])
         self.ui_slots: list[str] = manifest.get("ui_slots", [])
+        # Which Project.type values this plugin's widget applies to; empty = all.
+        self.project_types: list[str] = manifest.get("project_types", [])
         self.widget: str | None = manifest.get("widget")
         self._module = module
 

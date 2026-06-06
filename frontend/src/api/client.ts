@@ -13,7 +13,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
   })
   if (res.status === 401) {
-    window.location.href = '/login'
+    if (window.location.pathname !== "/login") window.location.href = "/login"
     throw new ApiError(401, 'Unauthorized')
   }
   if (!res.ok) {
@@ -147,5 +147,6 @@ export interface Plugin {
   version: string
   hooks: string[]
   ui_slots: string[]
+  project_types?: string[]
   widget: string | null
 }

@@ -6,5 +6,6 @@
   "widget": "MusicProjectWidget",
   "hooks": [],
   "ui_slots": ["interest.project"],
+  "project_types": ["music"],
   "permissions": []
 }

@@ -23,6 +23,7 @@ async def list_plugins(_uid: int = Depends(require_auth)):
             "version": p.manifest["version"],
             "hooks": p.hooks,
             "ui_slots": p.ui_slots,
+            "project_types": p.project_types,
             "widget": p.widget,
         }
         for p in loader.get_all()

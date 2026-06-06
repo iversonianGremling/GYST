@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { Trash2, FileIcon, ImageIcon, Music2, FileText, Plus, Rss, Save } from 'lucide-react'
-import { api, type Interest, type Note, type MediaAsset, type Project } from '@/api/client'
+import { Trash2, FileIcon, ImageIcon, Music2, FileText, Plus, Rss, Save, FolderInput } from 'lucide-react'
+import { api, type Interest, type Note, type MediaAsset, type Project, type Folder } from '@/api/client'
 import { formatRelative } from '@/lib/utils'
 import DropZone from '@/components/DropZone'
 import AudioPlayer from '@/components/AudioPlayer'
 import CoverHero, { type CoverSettings, DEFAULT_COVER_SETTINGS } from '@/components/CoverHero'
 import { PluginSlot, usePluginSlotReady } from '@/plugins/slots'
+import MoveToFolderModal from '@/components/MoveToFolderModal'
 
 interface FeedEntry { url: string; interest_id: string | null }
 
@@ -31,8 +32,12 @@ export default function InterestDetail() {
   const [coverSettings, setCoverSettings] = useState<CoverSettings>(DEFAULT_COVER_SETTINGS)
   const [coverDirty,   setCoverDirty]   = useState(false)
   const [coverSaving,  setCoverSaving]  = useState(false)
+  const [folders,      setFolders]      = useState<Folder[]>([])
+  const [showMoveModal, setShowMoveModal] = useState(false)
+  const [editProjectType, setEditProjectType] = useState<string>('generic')
+  const [savingProjectType, setSavingProjectType] = useState(false)
 
-  const { ready: pluginReady, count: pluginCount } = usePluginSlotReady('interest.project')
+  const { ready: pluginReady, count: pluginCount } = usePluginSlotReady('interest.project', project?.type ?? 'generic')
 
   const loadMedia = useCallback(() => {
     if (!id) return
@@ -57,6 +62,9 @@ export default function InterestDetail() {
     ]).then(([i, n, m, p]) => {
       setInterest(i); setNotes(n); setMedia(m); setProject(p)
       if (i?.cover_settings) setCoverSettings(i.cover_settings as CoverSettings)
+      if (p?.type) setEditProjectType(p.type)
+      const entityType = i.kind === 'project' ? 'project' : 'content'
+      api.get<Folder[]>(`/folders?entity_type=${entityType}`).then(setFolders)
     })
     loadFeeds()
   }, [id])
@@ -109,6 +117,26 @@ export default function InterestDetail() {
     setMedia((prev) => prev.filter((m) => m.id !== assetId))
   }
 
+  const moveToFolder = async (folderId: string | null) => {
+    if (!id) return
+    await api.patch(`/interests/${id}`, { folder_id: folderId })
+    setInterest((prev) => prev ? { ...prev, folder_id: folderId } : prev)
+    setShowMoveModal(false)
+  }
+
+  const saveProjectType = async () => {
+    if (!id) return
+    setSavingProjectType(true)
+    try {
+      const result = project
+        ? await api.patch<Project>(`/projects/${id}`, { type: editProjectType })
+        : await api.post<Project>(`/projects/${id}`, { type: editProjectType })
+      setProject(result)
+    } finally {
+      setSavingProjectType(false)
+    }
+  }
+
   if (!interest) return <div className="p-6 text-text-3">Loading…</div>
 
   const showProjectTab = pluginReady && pluginCount > 0 && interest.kind === 'project'
@@ -126,7 +154,7 @@ export default function InterestDetail() {
   ]
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       {/* Cover hero */}
       <CoverHero
         title={interest.title}
@@ -140,9 +168,9 @@ export default function InterestDetail() {
       <div className="px-6 pt-3 pb-6">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-xs text-text-3 mb-1">
-        <Link to="/interests" className="hover:text-accent">Interests</Link>
+        <Link to={interest.kind === 'project' ? '/projects' : '/interests'} className="hover:text-accent">{interest.kind === 'project' ? 'Projects' : 'Interests'}</Link>
         <span>/</span>
-        <span>{interest.kind}</span>
+        
       </div>
       {interest.description && (
         <p className="text-sm text-text-2 mb-4">{interest.description}</p>
@@ -294,6 +322,48 @@ export default function InterestDetail() {
       {tab === 'settings' && (
         <div className="space-y-6 max-w-sm">
           <div>
+            <h3 className="text-xs text-text-3 uppercase tracking-wide mb-2">Location</h3>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-text-2">
+                {interest.folder_id
+                  ? (folders.find((f) => f.id === interest.folder_id)?.name ?? 'Unknown folder')
+                  : <span className="text-text-3 italic">No folder</span>}
+              </span>
+              <button
+                onClick={() => setShowMoveModal(true)}
+                className="btn-ghost text-xs flex items-center gap-1.5"
+              >
+                <FolderInput size={13} /> Move to folder
+              </button>
+            </div>
+          </div>
+
+          {interest.kind === 'project' && (
+            <div>
+              <h3 className="text-xs text-text-3 uppercase tracking-wide mb-2">Project type</h3>
+              <div className="flex items-center gap-2">
+                <select
+                  className="input text-sm"
+                  value={editProjectType}
+                  onChange={(e) => setEditProjectType(e.target.value)}
+                >
+                  <option value="generic">Generic</option>
+                  <option value="music">Music</option>
+                  <option value="code">Code</option>
+                  <option value="research">Research</option>
+                </select>
+                <button
+                  onClick={saveProjectType}
+                  disabled={savingProjectType || editProjectType === project?.type}
+                  className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Save size={13} /> {savingProjectType ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div>
             <h3 className="text-xs text-text-3 uppercase tracking-wide mb-2">Cover image</h3>
             <p className="text-xs text-text-3 mb-3">Click "Edit cover" on the hero above to upload an image and adjust blur, brightness, tint, zoom, and position. Changes are previewed live.</p>
             {coverDirty && (
@@ -323,6 +393,14 @@ export default function InterestDetail() {
         </div>
       )}
       </div>
+
+      {showMoveModal && (
+        <MoveToFolderModal
+          folders={folders}
+          onSelect={moveToFolder}
+          onClose={() => setShowMoveModal(false)}
+        />
+      )}
     </div>
   )
 }
