@@ -1,11 +1,12 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Save, Link2, Columns2, Pin, PinOff } from 'lucide-react'
+import { Eye, EyeOff, Save, Link2, Columns2, Pin, PinOff, FolderInput, History, RotateCcw, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { api, type Note as NoteType, type MediaAsset } from '@/api/client'
-import { resolveWikilinks } from '@/lib/wikilinks'
+import { api, type Note as NoteType, type MediaAsset, type Folder } from '@/api/client'
+import { resolveWikilinks, slugify } from '@/lib/wikilinks'
 import CoverHero, { DEFAULT_COVER_SETTINGS, type CoverSettings } from '@/components/CoverHero'
+import MoveToFolderModal from '@/components/MoveToFolderModal'
 
 type ViewMode = 'edit' | 'preview' | 'split'
 
@@ -29,6 +30,14 @@ export default function NoteEditor() {
   const [backlinks, setBacklinks] = useState<{ id: string; title: string }[]>([])
   const [saving, setSaving] = useState(false)
   const [splitRatio, setSplitRatio] = useState(50)
+  const [folders, setFolders] = useState<Folder[]>([])
+  const [folderId, setFolderId] = useState<string | null>(null)
+  const [showMoveModal, setShowMoveModal] = useState(false)
+  const [allNotes, setAllNotes] = useState<NoteType[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [history, setHistory] = useState<{ commit: string; date: string; message: string }[] | null>(null)
+  const [historyErr, setHistoryErr] = useState<string | null>(null)
+  const [versionPreview, setVersionPreview] = useState<{ commit: string; title: string; body: string } | null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const dragging = useRef(false)
@@ -42,9 +51,40 @@ export default function NoteEditor() {
       setPinned(n.pinned)
       setCoverUrl(n.cover_path)
       setCoverSettings(n.cover_settings ?? DEFAULT_COVER_SETTINGS)
+      setFolderId(n.folder_id)
     })
     api.get<{ id: string; title: string }[]>(`/notes/${id}/backlinks`).then(setBacklinks)
+    api.get<Folder[]>('/folders?entity_type=note').then(setFolders)
   }, [id, isNew])
+
+  // All notes, for resolving [[wikilinks]] to their target note.
+  useEffect(() => { api.get<NoteType[]>('/notes').then(setAllNotes) }, [])
+  // Prefill title when creating a note from an unresolved wikilink.
+  useEffect(() => { if (isNew) setTitle(searchParams.get('title') ?? '') }, [isNew, searchParams])
+
+  const slugToId = useMemo(() => {
+    const m = new Map<string, string>()
+    allNotes.forEach((n) => m.set(n.slug, n.id))
+    return m
+  }, [allNotes])
+
+  const mdComponents = useMemo(() => ({
+    a({ href, children }: { href?: string; children?: React.ReactNode }) {
+      if (href?.startsWith('#new:')) {
+        const title = decodeURIComponent(href.slice(5))
+        return (
+          <a className="text-text-3 border-b border-dashed border-text-3 cursor-pointer hover:text-accent"
+             title="Create this note" onClick={() => navigate(`/notes/new?title=${encodeURIComponent(title)}`)}>
+            {children}
+          </a>
+        )
+      }
+      if (href?.startsWith('/')) {
+        return <a className="text-accent hover:underline cursor-pointer" onClick={() => navigate(href)}>{children}</a>
+      }
+      return <a href={href} target="_blank" rel="noreferrer" className="text-accent hover:underline">{children}</a>
+    },
+  }), [navigate])
 
   const save = useCallback(async () => {
     setSaving(true)
@@ -88,6 +128,19 @@ export default function NoteEditor() {
     if (!isNew && id) {
       await api.patch(`/notes/${id}`, { cover_path: asset.url })
     }
+  }
+
+  const openHistory = async () => {
+    setShowHistory(true); setHistory(null); setHistoryErr(null); setVersionPreview(null)
+    try { setHistory(await api.get(`/sync/history/${id}`)) }
+    catch (e) { setHistoryErr((e as Error).message) }
+  }
+  const viewVersion = async (commit: string) => {
+    setVersionPreview(await api.get(`/sync/version/${id}/${commit}`))
+  }
+  const restoreVersion = async (commit: string) => {
+    const r = await api.post<{ title: string; body: string }>(`/sync/restore/${id}/${commit}`)
+    setTitle(r.title); setBody(r.body); setShowHistory(false)
   }
 
   const togglePin = async () => {
@@ -141,7 +194,13 @@ export default function NoteEditor() {
   }, [applyDrag])
   // ────────────────────────────────────────────────────────────────────────
 
-  const previewBody = resolveWikilinks(body, (t) => `/notes?q=${encodeURIComponent(t)}`)
+  const previewBody = useMemo(
+    () => resolveWikilinks(body, (t) => {
+      const id = slugToId.get(slugify(t))
+      return id ? `/notes/${id}` : null
+    }),
+    [body, slugToId],
+  )
 
   const preview = (
     <div className="h-full overflow-y-auto p-5 prose prose-sm prose-invert max-w-none
@@ -150,7 +209,7 @@ export default function NoteEditor() {
                     prose-pre:bg-bg-3 prose-pre:border prose-pre:border-bg-4
                     prose-blockquote:border-accent prose-blockquote:text-text-3">
       {body
-        ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{previewBody}</ReactMarkdown>
+        ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{previewBody}</ReactMarkdown>
         : <p className="text-text-3 italic">Nothing to preview yet…</p>
       }
     </div>
@@ -198,6 +257,17 @@ export default function NoteEditor() {
           onChange={(e) => setDescription(e.target.value)}
         />
 
+        {/* Move to folder */}
+        {!isNew && (
+          <button
+            onClick={() => setShowMoveModal(true)}
+            title="Move to folder"
+            className="p-1.5 rounded transition-colors text-text-3 hover:text-text-1 hover:bg-bg-3"
+          >
+            <FolderInput size={14} />
+          </button>
+        )}
+
         {/* Pin toggle */}
         <button
           onClick={togglePin}
@@ -232,6 +302,15 @@ export default function NoteEditor() {
           </button>
         </div>
 
+        {!isNew && (
+          <button
+            className="text-text-3 hover:text-accent shrink-0 p-1.5"
+            onClick={openHistory} title="Version history"
+          >
+            <History size={15} />
+          </button>
+        )}
+
         <button
           className="btn-primary text-xs flex items-center gap-1.5 shrink-0"
           onClick={save}
@@ -264,6 +343,67 @@ export default function NoteEditor() {
             </div>
           )}
         </div>
+
+        {/* Move to folder modal */}
+        {showMoveModal && (
+          <MoveToFolderModal
+            folders={folders}
+            onSelect={async (fid) => {
+              if (!isNew && id) {
+                await api.patch(`/notes/${id}`, { folder_id: fid })
+                setFolderId(fid)
+              }
+              setShowMoveModal(false)
+            }}
+            onClose={() => setShowMoveModal(false)}
+          />
+        )}
+
+        {/* Version history modal */}
+        {showHistory && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setShowHistory(false)}>
+            <div className="bg-bg-1 border border-bg-3 rounded-lg w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-bg-3">
+                <History size={15} /> <span className="text-sm font-semibold">Version history</span>
+                <button onClick={() => setShowHistory(false)} className="ml-auto text-text-3 hover:text-text-1"><X size={16} /></button>
+              </div>
+              <div className="flex flex-1 min-h-0">
+                <div className="w-56 shrink-0 border-r border-bg-3 overflow-y-auto">
+                  {historyErr && <p className="text-xs text-text-3 p-3">{historyErr}</p>}
+                  {history && history.length === 0 && <p className="text-xs text-text-3 p-3">No history yet.</p>}
+                  {history?.map((h) => (
+                    <button
+                      key={h.commit} onClick={() => viewVersion(h.commit)}
+                      className={`block w-full text-left px-3 py-2 border-b border-bg-3 hover:bg-bg-2 ${versionPreview?.commit === h.commit ? 'bg-bg-2' : ''}`}
+                    >
+                      <div className="text-xs text-text-1 truncate">{h.message}</div>
+                      <div className="text-[11px] text-text-3">{new Date(h.date).toLocaleString()} · {h.commit.slice(0, 7)}</div>
+                    </button>
+                  ))}
+                  {history === null && !historyErr && <p className="text-xs text-text-3 p-3">Loading…</p>}
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col">
+                  {versionPreview ? (
+                    <>
+                      <div className="flex items-center gap-2 px-4 py-2 border-b border-bg-3">
+                        <span className="text-sm text-text-2 truncate">{versionPreview.title}</span>
+                        <button
+                          onClick={() => restoreVersion(versionPreview.commit)}
+                          className="btn-primary text-xs flex items-center gap-1 ml-auto shrink-0"
+                        >
+                          <RotateCcw size={13} /> Restore this version
+                        </button>
+                      </div>
+                      <pre className="flex-1 overflow-auto p-4 text-xs text-text-1 whitespace-pre-wrap break-words font-mono">{versionPreview.body}</pre>
+                    </>
+                  ) : (
+                    <p className="text-sm text-text-3 m-auto">Select a version to preview.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Backlinks panel */}
         {!isNew && backlinks.length > 0 && (

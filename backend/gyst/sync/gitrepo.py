@@ -90,6 +90,23 @@ def pull(repo: Path, url: str, *, token: str | None = None,
     return _run(repo, *_auth_args(token), "pull", "--no-edit", name, branch, check=False)
 
 
+def log_file(repo: Path, relpath: str, limit: int = 50) -> list[dict]:
+    """Commit history touching one file: newest first."""
+    r = _run(repo, "log", f"-{limit}", "--format=%H%x1f%cI%x1f%s", "--", relpath, check=False)
+    out: list[dict] = []
+    for line in r.stdout.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) == 3:
+            out.append({"commit": parts[0], "date": parts[1], "message": parts[2]})
+    return out
+
+
+def show_file(repo: Path, commit: str, relpath: str) -> str | None:
+    """File contents at a commit, or None if it didn't exist there."""
+    r = _run(repo, "show", f"{commit}:{relpath}", check=False)
+    return r.stdout if r.returncode == 0 else None
+
+
 def setup_lfs(repo: Path, patterns: tuple[str, ...] = ("media/**",)) -> None:
     """Track media via git-lfs. No-op-safe if git-lfs isn't installed (returns
     without raising so non-media repos keep working)."""

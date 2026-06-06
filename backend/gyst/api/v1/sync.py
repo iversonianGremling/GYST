@@ -12,9 +12,14 @@ from gyst.auth import require_auth
 from gyst.config import settings
 from gyst.core.models import Note, SyncConflict
 from gyst.db import get_session
-from gyst.sync import gitea
+from gyst.sync import gitea, gitrepo, vault
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+
+def _note_repo_rel(vault_path: str):
+    repo, _, rel = vault_path.partition("/")
+    return vault.VAULT_ROOT / repo, rel
 
 
 @router.get("/status")
@@ -123,3 +128,59 @@ async def resolve_all(
         await _resolve_one(session, c, body.choice)
     await session.commit()
     return {"resolved": len(rows)}
+
+
+# ── Note history / restore (vault git log) ───────────────────────────────────
+
+async def _vault_note(session: AsyncSession, note_id: str) -> Note:
+    n = await session.get(Note, note_id)
+    if not n:
+        raise HTTPException(404, "note not found")
+    if not n.vault_path:
+        raise HTTPException(400, "note is not synced to the vault")
+    return n
+
+
+@router.get("/history/{note_id}")
+async def history(
+    note_id: str,
+    session: AsyncSession = Depends(get_session),
+    _uid: int = Depends(require_auth),
+):
+    n = await _vault_note(session, note_id)
+    repo_dir, rel = _note_repo_rel(n.vault_path)
+    return gitrepo.log_file(repo_dir, rel)
+
+
+@router.get("/version/{note_id}/{commit}")
+async def version(
+    note_id: str, commit: str,
+    session: AsyncSession = Depends(get_session),
+    _uid: int = Depends(require_auth),
+):
+    n = await _vault_note(session, note_id)
+    repo_dir, rel = _note_repo_rel(n.vault_path)
+    text = gitrepo.show_file(repo_dir, commit, rel)
+    if text is None:
+        raise HTTPException(404, "version not found")
+    fm, body = vault.parse(text)
+    return {"commit": commit, "title": fm.get("title", n.title), "body": body}
+
+
+@router.post("/restore/{note_id}/{commit}")
+async def restore(
+    note_id: str, commit: str,
+    session: AsyncSession = Depends(get_session),
+    _uid: int = Depends(require_auth),
+):
+    n = await _vault_note(session, note_id)
+    repo_dir, rel = _note_repo_rel(n.vault_path)
+    text = gitrepo.show_file(repo_dir, commit, rel)
+    if text is None:
+        raise HTTPException(404, "version not found")
+    fm, body = vault.parse(text)
+    n.title = fm.get("title", n.title)
+    n.body_md = body
+    n.sync_status = "dirty"   # re-export so the restore propagates back to Gitea
+    await session.commit()
+    return {"ok": True, "title": n.title, "body": body}
