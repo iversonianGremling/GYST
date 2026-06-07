@@ -85,9 +85,13 @@ def test_relevance_scoring():
     assert s2 > 0
     s3, _ = disc.score_event("Exposicion de ceramica", prof)
     assert s3 == 0
+    # Single-word names match whole words only — "arca" must NOT hit "comarca".
+    arca = disc.Profile(terms=set(), phrases={"arca"})
+    assert disc.score_event("Festa na comarca de Lugo", arca)[0] == 0
+    assert disc.score_event("Concerto de Arca en Vigo", arca)[0] > 0
     empty = disc.Profile(set(), set())
     assert disc._apply_relevance([{"title": "x", "payload": {"match_text": "x"}}], empty) == []
-    print("  ok: relevance scoring + empty-profile gate")
+    print("  ok: relevance scoring + word-boundary + empty-profile gate")
 
 
 async def test_feed_fetch_stub():

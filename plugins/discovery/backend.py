@@ -133,7 +133,37 @@ class Profile:
         return not (self.terms or self.phrases)
 
 
-async def build_profile(session: AsyncSession) -> Profile:
+async def _setting(session: AsyncSession, key: str) -> Any:
+    from gyst.core.models import PluginSetting
+    row = await session.execute(select(PluginSetting).where(
+        PluginSetting.plugin_id == PLUGIN_ID, PluginSetting.key == key))
+    s = row.scalar_one_or_none()
+    return s.value if s else None
+
+
+async def _yamtrack_artists(ctx, url: str, token: str) -> list[dict[str, Any]]:
+    """Fetch the user's tracked artists from yamtrack (CT150), cached ~6h. LAN
+    call (no VPN lane). Names feed the relevance profile."""
+    import json
+    cache = ctx.fs / "yamtrack_artists.json"
+    try:
+        if cache.exists() and (datetime.now().timestamp() - cache.stat().st_mtime) < 6 * 3600:
+            return json.loads(cache.read_text())
+    except (OSError, ValueError):
+        pass
+    full = f"{url.rstrip('/')}/api/music/artists/{token}"
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(full)
+        r.raise_for_status()
+        artists = r.json().get("artists", [])
+    try:
+        cache.write_text(json.dumps(artists))
+    except OSError:
+        pass
+    return artists
+
+
+async def build_profile(session: AsyncSession, ctx: Any = None) -> Profile:
     terms: set[str] = set()
     phrases: set[str] = set()
 
@@ -159,7 +189,17 @@ async def build_profile(session: AsyncSession) -> Profile:
     for t in (await session.execute(select(Tag))).scalars().all():
         terms |= _tokens(t.name)
 
-    # (P3) yamtrack artists/genres get merged here once the CT150 endpoint lands.
+    # yamtrack music library — the user's tracked artists become match phrases.
+    if ctx is not None:
+        yt_url = await _setting(session, "yamtrack_url")
+        yt_token = await _setting(session, "yamtrack_token")
+        if yt_url and yt_token:
+            try:
+                for a in await _yamtrack_artists(ctx, yt_url, yt_token):
+                    phrases.add(_norm(a.get("name")))
+            except Exception as e:  # noqa: BLE001 — yamtrack down must not break discovery
+                ctx.log.warning("yamtrack profile fetch failed: %s", e)
+
     phrases = {p for p in phrases if len(p) >= 4}
     return Profile(terms, phrases)
 
@@ -170,7 +210,12 @@ def score_event(text: str, profile: Profile) -> tuple[float, list[str]]:
     reasons: list[str] = []
     score = 0.0
     for p in profile.phrases:
-        if p and p in n:
+        if not p:
+            continue
+        # Single-word names must match a WHOLE word (so "arca" doesn't hit
+        # "comarca"); multi-word names are safe as a substring.
+        hit = (p in n) if " " in p else (p in toks)
+        if hit:
             reasons.append(f"name:{p}")
             score += 0.6
     for h in sorted(toks & profile.terms):
@@ -394,7 +439,7 @@ async def feed_fetch(ctx: Any) -> list[dict[str, Any]]:
 
     now = datetime.now(UTC)
     window = (now, now + timedelta(days=settings.discovery.window_days))
-    profile = await build_profile(session)
+    profile = await build_profile(session, ctx)
     if profile.empty:
         ctx.log.info("discovery: empty interest profile — firehose sources will "
                      "emit nothing until interests are added")
@@ -448,6 +493,34 @@ def register_routes(router: APIRouter) -> None:
             {"id": c.id, "provides": sorted(c.provides), "consumes": sorted(c.consumes),
              "needs_location": c.needs_location, "requires_subject": c.requires_subject,
              "egress": c.egress} for c in CONNECTORS]}
+
+    # Sources / settings (yamtrack link, future API keys) ---------------------
+    @router.get("/settings")
+    async def get_settings(session: AsyncSession = Depends(get_session),
+                           _uid: int = Depends(require_auth)):
+        url = await _setting(session, "yamtrack_url")
+        token = await _setting(session, "yamtrack_token")
+        return {"yamtrack_url": url or "", "yamtrack_linked": bool(url and token)}
+
+    @router.put("/settings")
+    async def put_settings(body: dict[str, Any],
+                           session: AsyncSession = Depends(get_session),
+                           _uid: int = Depends(require_auth)):
+        from gyst.core.models import PluginSetting
+        for key in ("yamtrack_url", "yamtrack_token"):
+            if key not in body:
+                continue
+            row = await session.execute(select(PluginSetting).where(
+                PluginSetting.plugin_id == PLUGIN_ID, PluginSetting.key == key))
+            s = row.scalar_one_or_none()
+            if s:
+                s.value = body[key]
+            else:
+                session.add(PluginSetting(plugin_id=PLUGIN_ID, key=key, value=body[key]))
+        await session.commit()
+        url = await _setting(session, "yamtrack_url")
+        token = await _setting(session, "yamtrack_token")
+        return {"yamtrack_url": url or "", "yamtrack_linked": bool(url and token)}
 
     # Places ------------------------------------------------------------------
     @router.get("/places")
