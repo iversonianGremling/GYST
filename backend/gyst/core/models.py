@@ -299,3 +299,103 @@ class SyncConflict(Base):
     status: Mapped[str] = mapped_column(String, default="open")    # open|resolved
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# Code-project local tasks (Part II — code-project plugin)
+#
+# Purely local TODOs for a code project. Kept separate from GitHub issues
+# (a code project is local-first; GitHub is an optional remote).
+# ---------------------------------------------------------------------------
+
+class CodeTask(Base):
+    __tablename__ = "code_task"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    interest_id: Mapped[str] = mapped_column(ForeignKey("interest.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, default="open")    # open|done
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+# ---------------------------------------------------------------------------
+# Music scores (Part III — music-project plugin, composition suite)
+#
+# A structured "score document" authored in the piano-roll / tab / sing editors.
+# `doc` holds the full ScoreDoc JSON (tracks → notes with tick timing, plus
+# optional per-note lyric syllables and an audio-link offset). Kept separate
+# from MediaAsset (which stores uploaded/exported binary files) so editing is
+# native and lossless; export to .mid happens client-side on demand.
+# ---------------------------------------------------------------------------
+
+class MusicScore(Base):
+    __tablename__ = "music_score"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    interest_id: Mapped[str] = mapped_column(ForeignKey("interest.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String, nullable=False, default="Untitled")
+    kind: Mapped[str] = mapped_column(String, default="midi")   # midi|tab
+    doc: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+# ---------------------------------------------------------------------------
+# Discovery (docs/discovery.md) — composable interests → events
+#
+# Three facets that compose into a DiscoveryFeed:
+#   Place      — a saved location (city or region) with radius.
+#   InterestFacet — a typed sidecar on an Interest telling connectors HOW to
+#                   query for it (artist MBID, genre keyword, venue/museum
+#                   program, free topic, or a social handle).
+#   DiscoveryFeed — Place × {subject interests} × {categories}; the router
+#                   (plugins/discovery) fans each slice out to the connectors
+#                   that can serve it and emits FeedItem + (opt) calendar Event.
+# ---------------------------------------------------------------------------
+
+class Place(Base):
+    __tablename__ = "place"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str] = mapped_column(String, default="city")        # city|region
+    city: Mapped[str | None] = mapped_column(String)
+    region: Mapped[str | None] = mapped_column(String)
+    country: Mapped[str | None] = mapped_column(String)
+    lat: Mapped[float | None] = mapped_column(Float)
+    lon: Mapped[float | None] = mapped_column(Float)
+    radius_km: Mapped[int] = mapped_column(Integer, default=50)
+    precision: Mapped[str] = mapped_column(String, default="city")    # city|exact
+    is_home: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class InterestFacet(Base):
+    __tablename__ = "interest_facet"
+    interest_id: Mapped[str] = mapped_column(
+        ForeignKey("interest.id", ondelete="CASCADE"), primary_key=True,
+    )
+    # artist | genre | venue | museum | topic | social
+    facet_type: Mapped[str] = mapped_column(String, nullable=False)
+    # shape depends on facet_type, e.g.
+    #   artist -> {mbid, name}            genre  -> {genre}
+    #   venue  -> {name, instagram?, facebook?, website?, ics_url?}
+    #   museum -> {name, url?}            topic  -> {text}
+    #   social -> {instagram?, facebook?}
+    entity_ref: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    location_mode: Mapped[str] = mapped_column(String, default="place")  # place|global
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class DiscoveryFeed(Base):
+    __tablename__ = "discovery_feed"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    place_id: Mapped[str | None] = mapped_column(ForeignKey("place.id", ondelete="SET NULL"))
+    categories: Mapped[list] = mapped_column(JSON, default=list)            # list[str]
+    subject_interest_ids: Mapped[list] = mapped_column(JSON, default=list)  # list[str] | ["@yamtrack-artists"]
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    min_score: Mapped[float] = mapped_column(Float, default=0.0)
+    create_events: Mapped[bool] = mapped_column(Boolean, default=False)
+    interest_id: Mapped[str | None] = mapped_column(ForeignKey("interest.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

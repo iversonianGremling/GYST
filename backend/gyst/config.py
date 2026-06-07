@@ -73,6 +73,18 @@ class _Scheduler(BaseSettings):
     embed_interval_minutes: int = _toml.get("scheduler", {}).get("embed_interval_minutes", 360)
 
 
+class _Discovery(BaseSettings):
+    # Master kill-switch for the discovery plugin (privacy R5).
+    enabled: bool = _toml.get("discovery", {}).get("enabled", True)
+    # "" = use default route (already Mullvad-exited on CT151). Set to e.g.
+    # "socks5h://10.10.10.1:1080" to force via CT103 microsocks (needs socksio).
+    egress_proxy: str = _toml.get("discovery", {}).get("egress_proxy", "")
+    # Residential lane for scraping + social bridge (Cloudflare solver).
+    byparr_url: str = _toml.get("discovery", {}).get("byparr_url", "http://192.168.1.164:8191")
+    # Default forward-looking window for event search.
+    window_days: int = _toml.get("discovery", {}).get("window_days", 90)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GYST_", env_nested_delimiter="__")
 
@@ -82,6 +94,7 @@ class Settings(BaseSettings):
     plugins: _Plugins = _Plugins()
     recs: _Recs = _Recs()
     scheduler: _Scheduler = _Scheduler()
+    discovery: _Discovery = _Discovery()
     gitea: dict[str, Any] = _toml.get("gitea", {})   # url, token, org (vault sync)
 
 
