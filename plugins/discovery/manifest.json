@@ -3,6 +3,7 @@
   "name": "Discovery",
   "version": "0.1.0",
   "backend": "backend.py",
+  "widget": "DiscoveryWidget",
   "hooks": ["feed.fetch"],
   "ui_slots": ["settings.feeds"],
   "permissions": ["http.outbound"]

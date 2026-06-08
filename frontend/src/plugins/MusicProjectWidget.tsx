@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Music2, FileText, Sliders, Cpu, ExternalLink, Save } from 'lucide-react'
+import { Music2, Music4, FileText, Sliders, Cpu, ExternalLink, Save } from 'lucide-react'
 import { api, type MediaAsset } from '@/api/client'
 import AudioPlayer from '@/components/AudioPlayer'
 import DropZone from '@/components/DropZone'
 import TabViewer from '@/components/TabViewer'
 import SynthPad from '@/components/SynthPad'
+import ScoreList from '@/components/music/ScoreList'
 
-type Tab = 'lyrics' | 'samples' | 'tabs' | 'synth' | 'settings'
+type Tab = 'lyrics' | 'compose' | 'samples' | 'tabs' | 'synth' | 'settings'
 
 function TabFileList({ files }: { files: MediaAsset[] }) {
   const [active, setActive] = useState(files[0]?.id ?? null)
@@ -82,6 +83,7 @@ export default function MusicProjectWidget(props: Record<string, unknown>) {
 
   const TAB_ITEMS: { id: Tab; label: string; Icon: React.ElementType }[] = [
     { id: 'lyrics',   label: 'Lyrics',   Icon: FileText },
+    { id: 'compose',  label: 'Compose',  Icon: Music4 },
     { id: 'samples',  label: 'Samples',  Icon: Music2 },
     { id: 'tabs',     label: 'Tabs',     Icon: FileText },
     { id: 'synth',    label: 'Synth',    Icon: Cpu },
@@ -101,7 +103,7 @@ export default function MusicProjectWidget(props: Record<string, unknown>) {
       </div>
 
       {/* Sub-tabs */}
-      <div className="flex gap-0.5 border-b border-bg-3">
+      <div className="tab-strip gap-0.5 border-b border-bg-3">
         {TAB_ITEMS.map(({ id, label, Icon }) => (
           <button
             key={id}
@@ -136,6 +138,9 @@ export default function MusicProjectWidget(props: Record<string, unknown>) {
           )}
         </div>
       )}
+
+      {/* Compose — piano-roll / MIDI writer */}
+      {tab === 'compose' && <ScoreList interestId={interestId} />}
 
       {/* Samples */}
       {tab === 'samples' && (

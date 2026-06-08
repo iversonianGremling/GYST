@@ -115,3 +115,64 @@ def setup_lfs(repo: Path, patterns: tuple[str, ...] = ("media/**",)) -> None:
     _run(repo, "lfs", "install", "--local")
     for p in patterns:
         _run(repo, "lfs", "track", p)
+
+
+# ── Local code repos (code-project plugin) ───────────────────────────────────
+#
+# These browse/inspect a working clone living at data/repos/<interest_id>/.
+# GitHub is an optional remote, so everything here works with no token.
+
+def clone(url: str, dest: Path, *, token: str | None = None) -> subprocess.CompletedProcess:
+    """Clone ``url`` into ``dest`` (which must not yet exist). Auth, when given,
+    is injected per-call so the token is never written to .git/config."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    env = {**_ENV}
+    import os
+    return subprocess.run(
+        ["git", *_auth_args(token), "clone", url, str(dest)],
+        capture_output=True, text=True, check=False, env={**os.environ, **env},
+    )
+
+
+def current_branch(repo: Path) -> str | None:
+    r = _run(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
+    b = r.stdout.strip()
+    return b if r.returncode == 0 and b and b != "HEAD" else None
+
+
+def remote_url(repo: Path, name: str = "origin") -> str | None:
+    r = _run(repo, "remote", "get-url", name, check=False)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def log(repo: Path, limit: int = 30) -> list[dict]:
+    """Recent commits across the whole repo, newest first."""
+    r = _run(repo, "log", f"-{limit}",
+             "--format=%H%x1f%an%x1f%cI%x1f%s", check=False)
+    out: list[dict] = []
+    for line in r.stdout.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) == 4:
+            out.append({"sha": parts[0], "author": parts[1],
+                        "date": parts[2], "message": parts[3]})
+    return out
+
+
+def ls_files(repo: Path) -> list[str]:
+    """Tracked file paths (relative), sorted. Empty for a repo with no commits."""
+    r = _run(repo, "ls-files", check=False)
+    return sorted(p for p in r.stdout.splitlines() if p)
+
+
+def ahead_behind(repo: Path, name: str = "origin") -> tuple[int, int] | None:
+    """(ahead, behind) of HEAD vs its remote-tracking branch, or None if there
+    is no upstream (e.g. nothing fetched yet)."""
+    r = _run(repo, "rev-list", "--left-right", "--count",
+             f"HEAD...{name}/HEAD", check=False)
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    try:
+        ahead, behind = r.stdout.split()
+        return int(ahead), int(behind)
+    except ValueError:
+        return None

@@ -72,17 +72,17 @@ export default function Calendar() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button className="btn-ghost" onClick={() => setCurrent(subMonths(current, 1))}>‹</button>
-          <h2 className="text-lg font-semibold text-text-1 min-w-[180px] text-center">
+          <h2 className="text-lg font-semibold text-text-1 min-w-[140px] sm:min-w-[180px] text-center">
             {format(current, 'MMMM yyyy')}
           </h2>
           <button className="btn-ghost" onClick={() => setCurrent(addMonths(current, 1))}>›</button>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 ml-auto">
           <button className="btn-ghost text-sm" onClick={() => setCurrent(new Date())}>Today</button>
           <button className="btn-primary" onClick={openNew}>+ Event</button>
         </div>

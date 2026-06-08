@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType } from 'react'
 import type { Plugin } from '@/api/client'
-import { getPluginsForSlot, getWidget } from './registry'
+import { ensurePluginsLoaded, getPluginsForSlot, getWidget } from './registry'
 
 interface PluginSlotProps {
   name: string
@@ -22,11 +22,20 @@ export function PluginSlot({ name, ...props }: PluginSlotProps) {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    const plugins = getPluginsForSlot(name).filter((p) => appliesTo(p, projectType))
-    if (plugins.length === 0) { setWidgets([]); setLoaded(true); return }
-    Promise.all(plugins.map((p) => getWidget(p.id)))
-      .then((ws) => setWidgets(ws.filter(Boolean) as ComponentType<Record<string, unknown>>[]))
-      .finally(() => setLoaded(true))
+    let cancelled = false
+    // Wait for the plugin registry before reading it — the slot may render
+    // before loadPlugins() resolves (e.g. project loads faster than /plugins).
+    ensurePluginsLoaded()
+      .then(() => {
+        if (cancelled) return
+        const plugins = getPluginsForSlot(name).filter((p) => appliesTo(p, projectType))
+        if (plugins.length === 0) { setWidgets([]); return }
+        return Promise.all(plugins.map((p) => getWidget(p.id)))
+          .then((ws) => { if (!cancelled) setWidgets(ws.filter(Boolean) as ComponentType<Record<string, unknown>>[]) })
+      })
+      .catch(() => { if (!cancelled) setWidgets([]) })
+      .finally(() => { if (!cancelled) setLoaded(true) })
+    return () => { cancelled = true }
   }, [name, projectType])
 
   if (!loaded) return null
@@ -47,13 +56,17 @@ export function usePluginSlotReady(name: string, projectType?: string): { ready:
   const [state, setState] = useState({ ready: false, count: 0 })
 
   useEffect(() => {
-    const plugins = getPluginsForSlot(name).filter((p) => appliesTo(p, projectType))
-    if (plugins.length === 0) { setState({ ready: true, count: 0 }); return }
-    Promise.all(plugins.map((p) => getWidget(p.id)))
-      .then((ws) => {
-        const loaded = ws.filter(Boolean)
-        setState({ ready: true, count: loaded.length })
+    let cancelled = false
+    ensurePluginsLoaded()
+      .then(() => {
+        if (cancelled) return
+        const plugins = getPluginsForSlot(name).filter((p) => appliesTo(p, projectType))
+        if (plugins.length === 0) { setState({ ready: true, count: 0 }); return }
+        return Promise.all(plugins.map((p) => getWidget(p.id)))
+          .then((ws) => { if (!cancelled) setState({ ready: true, count: ws.filter(Boolean).length }) })
       })
+      .catch(() => { if (!cancelled) setState({ ready: true, count: 0 }) })
+    return () => { cancelled = true }
   }, [name, projectType])
 
   return state

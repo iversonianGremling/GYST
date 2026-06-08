@@ -1,25 +1,60 @@
-"""Code project plugin — link a GitHub repo and surface it inside GYST.
+"""Code project plugin — a local-first code project, optionally tied to GitHub.
 
-The GitHub fine-grained PAT is entered in the app (not gyst.toml) and stored in
-the DB via PluginSetting. Read path (P2.C): repo metadata, README, issues,
-commits, pull requests. Two-way issues (P2.D) come later.
+A code project is a local git working clone at ``data/repos/<interest_id>/``
+(created via ``init`` or ``clone``). GitHub is an *optional* remote: connect one
+to push/pull and to surface issues/PRs. Local TODO tasks are kept separate from
+GitHub issues. The optional GitHub fine-grained PAT is entered in the app (not
+gyst.toml) and stored in the DB via PluginSetting.
 """
 from __future__ import annotations
 
+import asyncio
+import shutil
+from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gyst.auth import require_auth
-from gyst.core.models import PluginSetting
+from gyst.config import settings
+from gyst.core.models import CodeTask, PluginSetting
 from gyst.db import get_session
+from gyst.sync import gitrepo
 
 PLUGIN_ID = "code-project"
 TOKEN_KEY = "__github_token__"
 GH = "https://api.github.com"
+
+# Local working clones live outside the vault, one dir per code project.
+REPOS_ROOT = settings.data.root / "repos"
+_README_NAMES = ("README.md", "Readme.md", "readme.md", "README", "README.markdown")
+
+
+def _repo_path(interest_id: str) -> Path:
+    return REPOS_ROOT / interest_id
+
+
+def _read_readme(repo: Path, limit: int = 200_000) -> str:
+    for name in _README_NAMES:
+        f = repo / name
+        if f.is_file():
+            try:
+                return f.read_text(errors="replace")[:limit]
+            except OSError:
+                return ""
+    return ""
+
+
+def _task_dict(t: CodeTask) -> dict[str, Any]:
+    return {
+        "id": t.id, "title": t.title, "body": t.body or "",
+        "status": t.status, "position": t.position,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
 
 
 # ── PluginSetting helpers ────────────────────────────────────────────────────
@@ -164,8 +199,253 @@ def register_routes(router: APIRouter) -> None:
         session: AsyncSession = Depends(get_session),
         _uid: int = Depends(require_auth),
     ):
+        # Disconnect GitHub but keep the local repo + its origin remote intact.
         await _kv_del(session, interest_id)
         await session.commit()
+
+    # ── Local repo lifecycle ─────────────────────────────────────────────────
+
+    @router.get("/repo/{interest_id}")
+    async def repo_status(
+        interest_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        path = _repo_path(interest_id)
+        exists = gitrepo.is_repo(path)
+        link = await _kv_get(session, interest_id) or {}
+        data: dict[str, Any] = {
+            "exists": exists,
+            "token_configured": bool(await _token(session)),
+            "github": {"owner": link["owner"], "repo": link["repo"]} if link.get("owner") else None,
+        }
+        if exists:
+            data.update({
+                "branch": gitrepo.current_branch(path),
+                "head": (gitrepo.head(path) or "")[:8],
+                "remote_url": gitrepo.remote_url(path),
+                "file_count": len(gitrepo.ls_files(path)),
+                "dirty": gitrepo.has_changes(path),
+                "readme": _read_readme(path),
+            })
+        return data
+
+    @router.post("/repo/{interest_id}/init", status_code=201)
+    async def repo_init(
+        interest_id: str,
+        body: dict[str, Any] = Body(default_factory=dict),
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        path = _repo_path(interest_id)
+        if gitrepo.is_repo(path):
+            raise HTTPException(409, "local repo already exists")
+        gitrepo.init(path)
+        if body.get("seed_readme", True):
+            title = (body.get("name") or "").strip() or "Code project"
+            (path / "README.md").write_text(f"# {title}\n")
+            gitrepo.commit_all(path, "Initial commit")
+        return {"ok": True}
+
+    @router.post("/repo/{interest_id}/clone", status_code=201)
+    async def repo_clone(
+        interest_id: str,
+        body: dict[str, Any],
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        path = _repo_path(interest_id)
+        if gitrepo.is_repo(path):
+            raise HTTPException(409, "local repo already exists")
+        owner, repo = _parse_repo(body.get("repo") or body.get("url") or "")
+        url = f"https://github.com/{owner}/{repo}.git"
+        token = await _token(session)  # optional — public repos clone without it
+        r = await asyncio.to_thread(gitrepo.clone, url, path, token=token)
+        if r.returncode != 0:
+            shutil.rmtree(path, ignore_errors=True)
+            raise HTTPException(400, f"clone failed: {(r.stderr or '').strip()[:200]}")
+        await _kv_set(session, interest_id, {"owner": owner, "repo": repo})
+        await session.commit()
+        return {"ok": True, "owner": owner, "repo": repo}
+
+    @router.post("/repo/{interest_id}/remote")
+    async def repo_set_remote(
+        interest_id: str,
+        body: dict[str, Any],
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        path = _repo_path(interest_id)
+        if not gitrepo.is_repo(path):
+            raise HTTPException(404, "no local repo")
+        token = await _token(session)
+        if not token:
+            raise HTTPException(400, "GitHub token not configured")
+        owner, repo = _parse_repo(body.get("repo", ""))
+        r = await _gh(token, f"/repos/{owner}/{repo}")
+        if r.status_code != 200:
+            raise HTTPException(404, f"repo not accessible ({r.status_code})")
+        gitrepo.set_remote(path, f"https://github.com/{owner}/{repo}.git")
+        await _kv_set(session, interest_id, {"owner": owner, "repo": repo})
+        await session.commit()
+        return {"owner": owner, "repo": repo}
+
+    @router.post("/repo/{interest_id}/push")
+    async def repo_push(
+        interest_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        token, owner, repo = await _require_link(session, interest_id)
+        path = _repo_path(interest_id)
+        if not gitrepo.is_repo(path):
+            raise HTTPException(404, "no local repo")
+        url = f"https://github.com/{owner}/{repo}.git"
+        branch = gitrepo.current_branch(path) or "main"
+        try:
+            await asyncio.to_thread(gitrepo.push, path, url, token=token, branch=branch)
+        except Exception as e:  # CalledProcessError carries stderr
+            detail = getattr(e, "stderr", None) or str(e)
+            raise HTTPException(400, f"push failed: {str(detail).strip()[:200]}")
+        return {"ok": True}
+
+    @router.post("/repo/{interest_id}/pull")
+    async def repo_pull(
+        interest_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        token, owner, repo = await _require_link(session, interest_id)
+        path = _repo_path(interest_id)
+        if not gitrepo.is_repo(path):
+            raise HTTPException(404, "no local repo")
+        url = f"https://github.com/{owner}/{repo}.git"
+        branch = gitrepo.current_branch(path) or "main"
+        r = await asyncio.to_thread(gitrepo.pull, path, url, token=token, branch=branch)
+        if r.returncode != 0:
+            raise HTTPException(400, f"pull failed: {(r.stderr or '').strip()[:200]}")
+        return {"ok": True, "output": (r.stdout or "").strip()[-400:]}
+
+    @router.get("/repo/{interest_id}/files")
+    async def repo_files(
+        interest_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        path = _repo_path(interest_id)
+        if not gitrepo.is_repo(path):
+            raise HTTPException(404, "no local repo")
+        return {"files": gitrepo.ls_files(path)}
+
+    @router.get("/repo/{interest_id}/file")
+    async def repo_file(
+        interest_id: str,
+        rel: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        repo = _repo_path(interest_id)
+        if not gitrepo.is_repo(repo):
+            raise HTTPException(404, "no local repo")
+        target = (repo / rel).resolve()
+        root = repo.resolve()
+        if root != target and root not in target.parents:
+            raise HTTPException(400, "path escapes repo")
+        if not target.is_file():
+            raise HTTPException(404, "file not found")
+        if target.stat().st_size > 500_000:
+            raise HTTPException(413, "file too large to preview")
+        try:
+            return {"path": rel, "content": target.read_text(errors="replace")}
+        except OSError:
+            raise HTTPException(415, "cannot read file")
+
+    @router.get("/repo/{interest_id}/commits")
+    async def repo_commits(
+        interest_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        path = _repo_path(interest_id)
+        if not gitrepo.is_repo(path):
+            raise HTTPException(404, "no local repo")
+        return [{**c, "sha": c["sha"][:8]} for c in gitrepo.log(path, limit=30)]
+
+    @router.delete("/repo/{interest_id}", status_code=204)
+    async def repo_delete(
+        interest_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        # Drop the local working clone. The GitHub link (if any) is left intact
+        # so the project can be re-cloned.
+        path = _repo_path(interest_id)
+        if gitrepo.is_repo(path):
+            shutil.rmtree(path, ignore_errors=True)
+
+    # ── Local tasks (separate from GitHub issues) ────────────────────────────
+
+    @router.get("/tasks/{interest_id}")
+    async def list_tasks(
+        interest_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        rows = (await session.execute(
+            select(CodeTask).where(CodeTask.interest_id == interest_id)
+            .order_by(CodeTask.status, CodeTask.position, CodeTask.created_at)
+        )).scalars().all()
+        return [_task_dict(t) for t in rows]
+
+    @router.post("/tasks/{interest_id}", status_code=201)
+    async def create_task(
+        interest_id: str,
+        body: dict[str, Any],
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "title required")
+        t = CodeTask(interest_id=interest_id, title=title,
+                     body=(body.get("body") or "").strip() or None,
+                     position=int(body.get("position", 0)))
+        session.add(t)
+        await session.commit()
+        await session.refresh(t)
+        return _task_dict(t)
+
+    @router.patch("/tasks/{interest_id}/{task_id}")
+    async def update_task(
+        interest_id: str,
+        task_id: str,
+        body: dict[str, Any],
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        t = await session.get(CodeTask, task_id)
+        if not t or t.interest_id != interest_id:
+            raise HTTPException(404, "task not found")
+        if "status" in body and body["status"] not in ("open", "done"):
+            raise HTTPException(400, "status must be open or done")
+        for k in ("title", "body", "status", "position"):
+            if k in body:
+                setattr(t, k, body[k])
+        await session.commit()
+        await session.refresh(t)
+        return _task_dict(t)
+
+    @router.delete("/tasks/{interest_id}/{task_id}", status_code=204)
+    async def delete_task(
+        interest_id: str,
+        task_id: str,
+        session: AsyncSession = Depends(get_session),
+        _uid: int = Depends(require_auth),
+    ):
+        t = await session.get(CodeTask, task_id)
+        if t and t.interest_id == interest_id:
+            await session.delete(t)
+            await session.commit()
 
     @router.get("/overview/{interest_id}")
     async def overview(

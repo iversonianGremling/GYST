@@ -7,11 +7,25 @@ interface WidgetModule {
 }
 
 let _plugins: Plugin[] = []
+let _loadPromise: Promise<Plugin[]> | null = null
 const _widgetCache = new Map<string, ComponentType<Record<string, unknown>>>()
 
-export async function loadPlugins(): Promise<Plugin[]> {
-  _plugins = await api.get<Plugin[]>('/plugins')
-  return _plugins
+export function loadPlugins(): Promise<Plugin[]> {
+  // Singleton in-flight promise so concurrent callers share one fetch and any
+  // component can await the same load regardless of mount order.
+  if (!_loadPromise) {
+    _loadPromise = api.get<Plugin[]>('/plugins')
+      .then((p) => { _plugins = p; return p })
+      .catch((e) => { _loadPromise = null; throw e }) // reset so a later call can retry
+  }
+  return _loadPromise
+}
+
+/** Resolves once the plugin list is available, kicking off the load if needed.
+ *  Slot consumers await this so they never read an empty registry just because
+ *  they rendered before loadPlugins() finished. */
+export function ensurePluginsLoaded(): Promise<Plugin[]> {
+  return loadPlugins()
 }
 
 export function getPlugins(): Plugin[] {

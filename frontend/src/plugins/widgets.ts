@@ -5,6 +5,7 @@ import ResearchProjectWidget from './ResearchProjectWidget'
 import CodeProjectWidget from './CodeProjectWidget'
 import RssFeedWidget from './RssFeedWidget'
 import LinkwardenWidget from './LinkwardenWidget'
+import DiscoveryWidget from './DiscoveryWidget'
 
 // Static widget registry — add an entry here when a plugin ships a bundled widget.
 // Dynamic ESM loading (for out-of-tree plugins) is attempted first in registry.ts;
@@ -16,4 +17,5 @@ export const STATIC_WIDGETS: Record<string, ComponentType<Record<string, unknown
   'code-project': CodeProjectWidget,
   'rss-feed': RssFeedWidget,
   'linkwarden': LinkwardenWidget,
+  'discovery': DiscoveryWidget,
 }

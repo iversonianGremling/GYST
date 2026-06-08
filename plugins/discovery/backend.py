@@ -8,9 +8,11 @@ docs/discovery.md.
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -493,6 +495,34 @@ def register_routes(router: APIRouter) -> None:
             {"id": c.id, "provides": sorted(c.provides), "consumes": sorted(c.consumes),
              "needs_location": c.needs_location, "requires_subject": c.requires_subject,
              "egress": c.egress} for c in CONNECTORS]}
+
+    # Results — the events that matched the user's interests (for the UI) ------
+    @router.get("/results")
+    async def results(session: AsyncSession = Depends(get_session),
+                      _uid: int = Depends(require_auth)):
+        from gyst.core.models import FeedItem
+        rows = await session.execute(
+            select(FeedItem).where(FeedItem.source_plugin == PLUGIN_ID)
+            .order_by(FeedItem.score.desc(), FeedItem.fetched_at.desc()).limit(60))
+        items = []
+        for f in rows.scalars():
+            p = f.payload or {}
+            items.append({
+                "id": f.id, "title": f.title, "url": f.url, "score": round(f.score, 3),
+                "category": p.get("category"), "location": p.get("location"),
+                "starts_at": p.get("starts_at"),
+                "reasons": (f.score_breakdown or {}).get("reasons", []),
+            })
+        # Profile summary (incl. yamtrack via a lightweight ctx shim, cached).
+        shim = SimpleNamespace(db=session, log=logging.getLogger("gyst.plugin.discovery"),
+                               fs=settings.data.root / "plugins" / PLUGIN_ID)
+        shim.fs.mkdir(parents=True, exist_ok=True)
+        try:
+            prof = await build_profile(session, shim)
+            profile = {"phrases": len(prof.phrases), "terms": sorted(prof.terms)}
+        except Exception:  # noqa: BLE001
+            profile = {"phrases": 0, "terms": []}
+        return {"items": items, "count": len(items), "profile": profile}
 
     # Sources / settings (yamtrack link, future API keys) ---------------------
     @router.get("/settings")

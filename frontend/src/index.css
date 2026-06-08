@@ -80,6 +80,17 @@
     color: var(--color-accent);
     background: color-mix(in srgb, var(--color-accent-dim) 70%, var(--color-bg-3));
   }
+  /* Horizontally scrollable tab row — keeps tabs on one line and swipeable on
+     narrow screens instead of wrapping/clipping. Hides the scrollbar. */
+  .tab-strip {
+    @apply flex overflow-x-auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .tab-strip::-webkit-scrollbar { display: none; }
+  .tab-strip > * {
+    @apply shrink-0 whitespace-nowrap;
+  }
 }
 
 /* GitHub README rendering (code-project Overview) */

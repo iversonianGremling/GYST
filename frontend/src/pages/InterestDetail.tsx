@@ -177,7 +177,7 @@ export default function InterestDetail() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-4 border-b border-bg-3">
+      <div className="tab-strip gap-1 mb-4 border-b border-bg-3">
         {tabs.filter((t) => t.show !== false).map((t) => (
           <button
             key={t.id}

@@ -1,54 +1,64 @@
 import { useEffect, useState, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   Code2, KeyRound, Link2, FileText, CircleDot, GitPullRequest, GitCommit,
-  ExternalLink, Star, Check, Settings2, RefreshCw,
-  ArrowLeft, Plus, MessageSquare, CheckCircle2, Send,
+  ExternalLink, Settings2, RefreshCw, GitBranch, FolderGit2, DownloadCloud,
+  ArrowLeft, Plus, CheckCircle2, Send, Upload, Download, Trash2,
+  ListTodo, Square, CheckSquare, File as FileIcon,
 } from 'lucide-react'
 import { api } from '@/api/client'
 
+const BASE = '/plugins/code-project'
+
 interface Settings { configured: boolean; login: string | null; error?: string }
-interface Link { owner?: string; repo?: string }
-interface Overview {
-  full_name: string; description: string | null; language: string | null
-  stars: number; open_issues: number; default_branch: string; pushed_at: string
-  html_url: string; readme_html: string
+interface RepoStatus {
+  exists: boolean
+  token_configured: boolean
+  github: { owner: string; repo: string } | null
+  branch?: string | null
+  head?: string
+  remote_url?: string | null
+  file_count?: number
+  dirty?: boolean
+  readme?: string
 }
 interface Issue { number: number; title: string; labels: string[]; comments: number; html_url: string; user: string; updated_at: string }
 interface Pull { number: number; title: string; user: string; html_url: string; draft: boolean }
-interface Commit { sha: string; message: string; author: string; date: string; html_url: string }
+interface LocalCommit { sha: string; author: string; date: string; message: string }
+interface Task { id: string; title: string; body: string; status: 'open' | 'done'; position: number }
 interface IssueComment { user: string; body: string; created_at: string }
 interface IssueFull {
   number: number; title: string; body: string; state: string; user: string
   labels: string[]; html_url: string; comments: IssueComment[]
 }
 
-type Tab = 'overview' | 'issues' | 'pulls' | 'activity'
+type Tab = 'overview' | 'files' | 'commits' | 'tasks' | 'issues' | 'pulls'
 
-/* ── Issue detail (two-way) ──────────────────────────────────────────────── */
+/* ── Issue detail (two-way GitHub) ───────────────────────────────────────── */
 function IssueDetail({ interestId, number, onBack, onChanged }: {
   interestId: string; number: number; onBack: () => void; onChanged: () => void
 }) {
-  const base = `/plugins/code-project`
   const [issue, setIssue] = useState<IssueFull | null>(null)
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(() => {
-    api.get<IssueFull>(`${base}/issue/${interestId}/${number}`).then(setIssue)
-  }, [base, interestId, number])
+    api.get<IssueFull>(`${BASE}/issue/${interestId}/${number}`).then(setIssue)
+  }, [interestId, number])
   useEffect(() => { load() }, [load])
 
   const addComment = async () => {
     if (!comment.trim()) return
     setBusy(true)
-    try { await api.post(`${base}/issue/${interestId}/${number}/comment`, { body: comment }); setComment(''); load() }
+    try { await api.post(`${BASE}/issue/${interestId}/${number}/comment`, { body: comment }); setComment(''); load() }
     finally { setBusy(false) }
   }
   const toggleState = async () => {
     if (!issue) return
     setBusy(true)
     try {
-      await api.patch(`${base}/issue/${interestId}/${number}`, { state: issue.state === 'open' ? 'closed' : 'open' })
+      await api.patch(`${BASE}/issue/${interestId}/${number}`, { state: issue.state === 'open' ? 'closed' : 'open' })
       load(); onChanged()
     } finally { setBusy(false) }
   }
@@ -99,37 +109,41 @@ function IssueDetail({ interestId, number, onBack, onChanged }: {
   )
 }
 
-/* ── Token setup ─────────────────────────────────────────────────────────── */
-function TokenSetup({ onSaved }: { onSaved: (s: Settings) => void }) {
+/* ── GitHub token setup (only needed for GitHub features) ─────────────────── */
+function TokenSetup({ onSaved, compact }: { onSaved: (s: Settings) => void; compact?: boolean }) {
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const save = async () => {
     setBusy(true); setErr(null)
-    try { onSaved(await api.put<Settings>('/plugins/code-project/settings', { token: token.trim() })) }
+    try { onSaved(await api.put<Settings>(`${BASE}/settings`, { token: token.trim() })) }
     catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
 
   return (
-    <div className="card p-5 space-y-4 max-w-xl">
-      <div className="flex items-center gap-2">
-        <Code2 size={18} /> <h3 className="text-sm font-semibold">Connect GitHub</h3>
-      </div>
-      <p className="text-sm text-text-2">
-        Code projects connect to a GitHub repo with a <strong>fine-grained personal access token</strong>.
-        Create one (it stays on your server, stored once):
-      </p>
-      <ol className="text-sm text-text-2 space-y-1.5 list-decimal pl-5">
-        <li>GitHub → <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong> → <em>Generate new token</em>.</li>
-        <li><strong>Repository access:</strong> select the repos you want GYST to see.</li>
-        <li><strong>Permissions:</strong> Contents → <em>Read-only</em>, Issues → <em>Read and write</em>, Pull requests → <em>Read-only</em>.</li>
-        <li>Generate, copy the <code>github_pat_…</code> token, and paste it below.</li>
-      </ol>
-      <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noreferrer"
-         className="inline-flex items-center gap-1 text-sm text-accent">
-        Open token settings <ExternalLink size={13} />
-      </a>
+    <div className={`space-y-3 ${compact ? '' : 'card p-5 max-w-xl'}`}>
+      {!compact && (
+        <>
+          <div className="flex items-center gap-2">
+            <Link2 size={18} /> <h3 className="text-sm font-semibold">Connect GitHub</h3>
+          </div>
+          <p className="text-sm text-text-2">
+            GitHub features (clone private repos, push/pull, issues) use a{' '}
+            <strong>fine-grained personal access token</strong>. It stays on your server, stored once.
+          </p>
+          <ol className="text-sm text-text-2 space-y-1.5 list-decimal pl-5">
+            <li>GitHub → <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong> → <em>Generate new token</em>.</li>
+            <li><strong>Repository access:</strong> select the repos you want GYST to use.</li>
+            <li><strong>Permissions:</strong> Contents → <em>Read and write</em>, Issues → <em>Read and write</em>, Pull requests → <em>Read-only</em>.</li>
+            <li>Generate, copy the <code>github_pat_…</code> token, and paste it below.</li>
+          </ol>
+          <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noreferrer"
+             className="inline-flex items-center gap-1 text-sm text-accent">
+            Open token settings <ExternalLink size={13} />
+          </a>
+        </>
+      )}
       <div className="flex items-center gap-2 pt-1">
         <KeyRound size={15} className="text-text-3" />
         <input
@@ -138,7 +152,7 @@ function TokenSetup({ onSaved }: { onSaved: (s: Settings) => void }) {
           className="flex-1 bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm font-mono"
         />
         <button onClick={save} disabled={busy || !token.trim()} className="btn-primary text-sm disabled:opacity-50">
-          {busy ? 'Checking…' : 'Connect'}
+          {busy ? 'Checking…' : 'Save token'}
         </button>
       </div>
       {err && <p className="text-xs text-[var(--color-danger)]">{err}</p>}
@@ -146,9 +160,86 @@ function TokenSetup({ onSaved }: { onSaved: (s: Settings) => void }) {
   )
 }
 
-/* ── Repo link ───────────────────────────────────────────────────────────── */
-function RepoLink({ interestId, login, onLinked, onReset }: {
-  interestId: string; login: string | null; onLinked: (l: Link) => void; onReset: () => void
+/* ── Landing: no local repo yet ──────────────────────────────────────────── */
+function RepoLanding({ interestId, status, onChanged, onTokenSaved }: {
+  interestId: string; status: RepoStatus; onChanged: () => void; onTokenSaved: (s: Settings) => void
+}) {
+  const [mode, setMode] = useState<'choose' | 'clone'>('choose')
+  const [name, setName] = useState('')
+  const [repo, setRepo] = useState(status.github ? `${status.github.owner}/${status.github.repo}` : '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const createLocal = async () => {
+    setBusy(true); setErr(null)
+    try { await api.post(`${BASE}/repo/${interestId}/init`, { name: name.trim() }); onChanged() }
+    catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  const clone = async () => {
+    setBusy(true); setErr(null)
+    try { await api.post(`${BASE}/repo/${interestId}/clone`, { repo: repo.trim() }); onChanged() }
+    catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="space-y-4 max-w-xl">
+      <div className="flex items-center gap-2">
+        <Code2 size={18} /> <h3 className="text-sm font-semibold">Set up this code project</h3>
+      </div>
+
+      {mode === 'choose' && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="card p-4 space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium"><FolderGit2 size={16} /> Local repository</div>
+            <p className="text-xs text-text-3">Start a fresh git repo on your server. No GitHub needed — connect one later if you want.</p>
+            <input
+              value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name (optional)"
+              className="w-full bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+            />
+            <button onClick={createLocal} disabled={busy} className="btn-primary text-sm w-full disabled:opacity-50">
+              {busy ? 'Creating…' : 'Create local repo'}
+            </button>
+          </div>
+          <div className="card p-4 space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium"><DownloadCloud size={16} /> Clone from GitHub</div>
+            <p className="text-xs text-text-3">Pull an existing GitHub repo down to your server. Private repos need a token first.</p>
+            <button onClick={() => setMode('clone')} className="btn-ghost text-sm w-full">Clone a repo…</button>
+          </div>
+        </div>
+      )}
+
+      {mode === 'clone' && (
+        <div className="card p-4 space-y-3">
+          <button onClick={() => setMode('choose')} className="flex items-center gap-1 text-xs text-text-3 hover:text-accent">
+            <ArrowLeft size={13} /> Back
+          </button>
+          <div className="flex items-center gap-2">
+            <input
+              value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/repo  (or a GitHub URL)"
+              className="flex-1 bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+            />
+            <button onClick={clone} disabled={busy || !repo.trim()} className="btn-primary text-sm disabled:opacity-50">
+              {busy ? 'Cloning…' : 'Clone'}
+            </button>
+          </div>
+          {!status.token_configured && (
+            <details className="text-xs text-text-3">
+              <summary className="cursor-pointer hover:text-accent">Private repo? Add a GitHub token</summary>
+              <div className="pt-2"><TokenSetup compact onSaved={onTokenSaved} /></div>
+            </details>
+          )}
+        </div>
+      )}
+
+      {err && <p className="text-xs text-[var(--color-danger)]">{err}</p>}
+    </div>
+  )
+}
+
+/* ── Connect a GitHub remote to an existing local repo ───────────────────── */
+function ConnectGitHub({ interestId, status, onClose, onLinked, onTokenSaved }: {
+  interestId: string; status: RepoStatus; onClose: () => void
+  onLinked: () => void; onTokenSaved: (s: Settings) => void
 }) {
   const [repo, setRepo] = useState('')
   const [busy, setBusy] = useState(false)
@@ -156,30 +247,150 @@ function RepoLink({ interestId, login, onLinked, onReset }: {
 
   const link = async () => {
     setBusy(true); setErr(null)
-    try { onLinked(await api.put<Link>(`/plugins/code-project/link/${interestId}`, { repo: repo.trim() })) }
+    try { await api.post(`${BASE}/repo/${interestId}/remote`, { repo: repo.trim() }); onLinked() }
     catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
 
   return (
-    <div className="card p-5 space-y-3 max-w-xl">
+    <div className="card p-4 space-y-3 max-w-xl">
       <div className="flex items-center gap-2">
-        <Link2 size={16} /> <h3 className="text-sm font-semibold">Link a repository</h3>
-        <span className="text-xs text-text-3 ml-auto flex items-center gap-1">
-          <Check size={12} className="text-green-500" /> {login}
-          <button onClick={onReset} className="ml-2 text-text-3 hover:text-accent underline">change token</button>
-        </span>
+        <Link2 size={16} /> <h3 className="text-sm font-semibold">Connect a GitHub remote</h3>
+        <button onClick={onClose} className="ml-auto text-xs text-text-3 hover:text-accent">Cancel</button>
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          value={repo} onChange={(e) => setRepo(e.target.value)}
-          placeholder="owner/repo  (or a GitHub URL)"
-          className="flex-1 bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
-        />
-        <button onClick={link} disabled={busy || !repo.trim()} className="btn-primary text-sm disabled:opacity-50">
-          {busy ? 'Linking…' : 'Link'}
+      {!status.token_configured ? (
+        <TokenSetup compact onSaved={onTokenSaved} />
+      ) : (
+        <div className="flex items-center gap-2">
+          <input
+            value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/repo  (or a GitHub URL)"
+            className="flex-1 bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+          />
+          <button onClick={link} disabled={busy || !repo.trim()} className="btn-primary text-sm disabled:opacity-50">
+            {busy ? 'Linking…' : 'Connect'}
+          </button>
+        </div>
+      )}
+      {err && <p className="text-xs text-[var(--color-danger)]">{err}</p>}
+    </div>
+  )
+}
+
+/* ── Tasks tab ───────────────────────────────────────────────────────────── */
+function TasksTab({ interestId }: { interestId: string }) {
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setTasks(await api.get<Task[]>(`${BASE}/tasks/${interestId}`)) } finally { setLoading(false) }
+  }, [interestId])
+  useEffect(() => { load() }, [load])
+
+  const add = async () => {
+    if (!title.trim()) return
+    await api.post(`${BASE}/tasks/${interestId}`, { title, body })
+    setTitle(''); setBody(''); setAdding(false); load()
+  }
+  const toggle = async (t: Task) => {
+    await api.patch(`${BASE}/tasks/${interestId}/${t.id}`, { status: t.status === 'open' ? 'done' : 'open' })
+    load()
+  }
+  const remove = async (t: Task) => { await api.del(`${BASE}/tasks/${interestId}/${t.id}`); load() }
+
+  const open = tasks.filter((t) => t.status === 'open')
+  const done = tasks.filter((t) => t.status === 'done')
+
+  const Row = (t: Task) => (
+    <div key={t.id} className="flex items-start gap-2 p-3 group">
+      <button onClick={() => toggle(t)} className="mt-0.5 text-text-3 hover:text-accent shrink-0">
+        {t.status === 'done' ? <CheckSquare size={16} className="text-green-500" /> : <Square size={16} />}
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className={`text-sm ${t.status === 'done' ? 'text-text-3 line-through' : 'text-text-1'}`}>{t.title}</div>
+        {t.body && <div className="text-xs text-text-3 whitespace-pre-wrap">{t.body}</div>}
+      </div>
+      <button onClick={() => remove(t)} className="text-text-3 hover:text-[var(--color-danger)] opacity-0 group-hover:opacity-100 shrink-0">
+        <Trash2 size={14} />
+      </button>
+    </div>
+  )
+
+  return (
+    <div className="space-y-3">
+      <div className="flex">
+        <button onClick={() => setAdding((v) => !v)} className="btn-primary text-sm flex items-center gap-1 ml-auto">
+          <Plus size={14} /> Add task
         </button>
       </div>
-      {err && <p className="text-xs text-[var(--color-danger)]">{err}</p>}
+      {adding && (
+        <div className="card p-3 space-y-2">
+          <input
+            value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Task title"
+            className="w-full bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+          />
+          <textarea
+            value={body} onChange={(e) => setBody(e.target.value)} rows={2} placeholder="Notes (optional)"
+            className="w-full bg-bg-2 border border-bg-3 rounded px-2 py-1.5 text-sm"
+          />
+          <button onClick={add} disabled={!title.trim()} className="btn-primary text-sm disabled:opacity-50">Add</button>
+        </div>
+      )}
+      {loading ? <p className="text-sm text-text-3">Loading…</p> : (
+        <>
+          <div className="card divide-y divide-bg-3">
+            {open.length === 0 ? <p className="text-sm text-text-3 p-4 text-center">No open tasks.</p> : open.map(Row)}
+          </div>
+          {done.length > 0 && (
+            <div>
+              <div className="text-xs text-text-3 mb-1 mt-2">Done ({done.length})</div>
+              <div className="card divide-y divide-bg-3 opacity-70">{done.map(Row)}</div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+/* ── Files tab ───────────────────────────────────────────────────────────── */
+function FilesTab({ interestId }: { interestId: string }) {
+  const [files, setFiles] = useState<string[]>([])
+  const [sel, setSel] = useState<string | null>(null)
+  const [content, setContent] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => { api.get<{ files: string[] }>(`${BASE}/repo/${interestId}/files`).then((r) => setFiles(r.files)) }, [interestId])
+
+  const openFile = async (rel: string) => {
+    setSel(rel); setErr(null); setContent('')
+    try {
+      const r = await api.get<{ content: string }>(`${BASE}/repo/${interestId}/file?rel=${encodeURIComponent(rel)}`)
+      setContent(r.content)
+    } catch (e) { setErr((e as Error).message) }
+  }
+
+  if (sel) return (
+    <div className="space-y-2">
+      <button onClick={() => setSel(null)} className="flex items-center gap-1 text-xs text-text-3 hover:text-accent">
+        <ArrowLeft size={13} /> {sel}
+      </button>
+      {err ? <p className="text-sm text-[var(--color-danger)]">{err}</p> :
+        <pre className="card p-4 text-xs text-text-1 overflow-x-auto max-h-[30rem]">{content}</pre>}
+    </div>
+  )
+
+  return (
+    <div className="card divide-y divide-bg-3 max-h-[30rem] overflow-y-auto">
+      {files.length === 0 ? <p className="text-sm text-text-3 p-4 text-center">No tracked files yet.</p> :
+        files.map((f) => (
+          <button key={f} onClick={() => openFile(f)} className="flex items-center gap-2 p-2 px-3 hover:bg-bg-2 w-full text-left">
+            <FileIcon size={13} className="text-text-3 shrink-0" />
+            <span className="text-sm text-text-1 truncate">{f}</span>
+          </button>
+        ))}
     </div>
   )
 }
@@ -187,14 +398,15 @@ function RepoLink({ interestId, login, onLinked, onReset }: {
 /* ── Main widget ─────────────────────────────────────────────────────────── */
 export default function CodeProjectWidget(props: Record<string, unknown>) {
   const interestId = props.interestId as string
-  const [settings, setSettings] = useState<Settings | null>(null)
-  const [link, setLink] = useState<Link | null>(null)
+  const [repo, setRepo] = useState<RepoStatus | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
+  const [connecting, setConnecting] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
 
-  const [overview, setOverview] = useState<Overview | null>(null)
   const [issues, setIssues] = useState<Issue[]>([])
   const [pulls, setPulls] = useState<Pull[]>([])
-  const [commits, setCommits] = useState<Commit[]>([])
+  const [commits, setCommits] = useState<LocalCommit[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [selIssue, setSelIssue] = useState<number | null>(null)
@@ -202,60 +414,96 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
   const [niTitle, setNiTitle] = useState('')
   const [niBody, setNiBody] = useState('')
 
-  const init = useCallback(async () => {
-    const s = await api.get<Settings>('/plugins/code-project/settings')
-    setSettings(s)
-    if (s.configured) setLink(await api.get<Link>(`/plugins/code-project/link/${interestId}`))
+  const loadRepo = useCallback(async () => {
+    setRepo(await api.get<RepoStatus>(`${BASE}/repo/${interestId}`))
   }, [interestId])
-  useEffect(() => { init() }, [init])
+  useEffect(() => { loadRepo() }, [loadRepo])
+
+  const linked = !!repo?.github
 
   const loadTab = useCallback(async (t: Tab) => {
-    if (!link?.owner) return
+    if (!repo?.exists) return
     setLoading(true); setErr(null)
-    const base = `/plugins/code-project`
     try {
-      if (t === 'overview') setOverview(await api.get<Overview>(`${base}/overview/${interestId}`))
-      if (t === 'issues') setIssues(await api.get<Issue[]>(`${base}/issues/${interestId}`))
-      if (t === 'pulls') setPulls(await api.get<Pull[]>(`${base}/pulls/${interestId}`))
-      if (t === 'activity') setCommits(await api.get<Commit[]>(`${base}/commits/${interestId}`))
+      if (t === 'commits') setCommits(await api.get<LocalCommit[]>(`${BASE}/repo/${interestId}/commits`))
+      if (t === 'issues' && linked) setIssues(await api.get<Issue[]>(`${BASE}/issues/${interestId}`))
+      if (t === 'pulls' && linked) setPulls(await api.get<Pull[]>(`${BASE}/pulls/${interestId}`))
     } catch (e) { setErr((e as Error).message) } finally { setLoading(false) }
-  }, [interestId, link])
+  }, [interestId, repo, linked])
 
-  useEffect(() => { if (link?.owner) loadTab(tab) }, [tab, link, loadTab])
+  useEffect(() => { if (repo?.exists) loadTab(tab) }, [tab, repo, loadTab])
 
-  const resetToken = async () => { await api.del('/plugins/code-project/settings'); setSettings({ configured: false, login: null }); setLink(null) }
-  const unlink = async () => { await api.del(`/plugins/code-project/link/${interestId}`); setLink({}) }
+  const gitAction = async (action: 'push' | 'pull') => {
+    setBusy(true); setMsg(null); setErr(null)
+    try { await api.post(`${BASE}/repo/${interestId}/${action}`, {}); setMsg(`${action === 'push' ? 'Pushed' : 'Pulled'} ✓`); loadRepo() }
+    catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  const disconnect = async () => { await api.del(`${BASE}/link/${interestId}`); loadRepo() }
   const createIssue = async () => {
     if (!niTitle.trim()) return
-    await api.post(`/plugins/code-project/issues/${interestId}`, { title: niTitle, body: niBody })
+    await api.post(`${BASE}/issues/${interestId}`, { title: niTitle, body: niBody })
     setNewIssue(false); setNiTitle(''); setNiBody(''); loadTab('issues')
   }
 
-  if (!settings) return <div className="text-text-3 text-sm">Loading…</div>
-  if (!settings.configured) return <TokenSetup onSaved={(s) => { setSettings(s); init() }} />
-  if (!link?.owner) return <RepoLink interestId={interestId} login={settings.login} onLinked={setLink} onReset={resetToken} />
+  if (!repo) return <div className="text-text-3 text-sm">Loading…</div>
 
-  const TABS: { id: Tab; label: string; Icon: React.ElementType }[] = [
+  // No local repo yet → landing.
+  if (!repo.exists) {
+    return <RepoLanding interestId={interestId} status={repo} onChanged={loadRepo} onTokenSaved={() => loadRepo()} />
+  }
+
+  const TABS: { id: Tab; label: string; Icon: React.ElementType; gh?: boolean }[] = [
     { id: 'overview', label: 'Overview', Icon: FileText },
-    { id: 'issues', label: 'Issues', Icon: CircleDot },
-    { id: 'pulls', label: 'Pull requests', Icon: GitPullRequest },
-    { id: 'activity', label: 'Activity', Icon: GitCommit },
+    { id: 'files', label: 'Files', Icon: FolderGit2 },
+    { id: 'commits', label: 'Commits', Icon: GitCommit },
+    { id: 'tasks', label: 'Tasks', Icon: ListTodo },
+    { id: 'issues', label: 'Issues', Icon: CircleDot, gh: true },
+    { id: 'pulls', label: 'Pull requests', Icon: GitPullRequest, gh: true },
   ]
+  const visibleTabs = TABS.filter((t) => !t.gh || linked)
 
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center gap-2 flex-wrap">
         <span className="flex items-center gap-1.5 text-sm font-medium">
-          <Code2 size={15} /> {link.owner}/{link.repo}
+          <Code2 size={15} /> {linked ? `${repo.github!.owner}/${repo.github!.repo}` : 'Local repository'}
         </span>
+        {repo.branch && (
+          <span className="flex items-center gap-1 text-xs text-text-3"><GitBranch size={12} /> {repo.branch}</span>
+        )}
+        {repo.dirty && <span className="text-xs text-amber-500">uncommitted changes</span>}
         <div className="ml-auto flex items-center gap-1">
-          <button onClick={() => loadTab(tab)} className="btn-ghost p-1.5" title="Refresh"><RefreshCw size={14} /></button>
-          <button onClick={unlink} className="btn-ghost p-1.5" title="Unlink repo"><Settings2 size={14} /></button>
+          {linked && (
+            <>
+              <button onClick={() => gitAction('pull')} disabled={busy} className="btn-ghost p-1.5" title="Pull from GitHub"><Download size={14} /></button>
+              <button onClick={() => gitAction('push')} disabled={busy} className="btn-ghost p-1.5" title="Push to GitHub"><Upload size={14} /></button>
+              <button onClick={disconnect} className="btn-ghost p-1.5" title="Disconnect GitHub"><Settings2 size={14} /></button>
+            </>
+          )}
+          {!linked && (
+            <button onClick={() => setConnecting(true)} className="btn-ghost text-xs flex items-center gap-1 px-2 py-1">
+              <Link2 size={13} /> Connect GitHub
+            </button>
+          )}
+          <button onClick={() => { loadRepo(); loadTab(tab) }} className="btn-ghost p-1.5" title="Refresh"><RefreshCw size={14} /></button>
         </div>
       </div>
 
+      {msg && <p className="text-xs text-green-500">{msg}</p>}
+
+      {connecting && (
+        <ConnectGitHub
+          interestId={interestId} status={repo}
+          onClose={() => setConnecting(false)}
+          onLinked={() => { setConnecting(false); loadRepo() }}
+          onTokenSaved={() => loadRepo()}
+        />
+      )}
+
+      {/* Tabs */}
       <div className="flex items-center gap-2 flex-wrap border-b border-bg-3 pb-2">
-        {TABS.map(({ id, label, Icon }) => (
+        {visibleTabs.map(({ id, label, Icon }) => (
           <button
             key={id} onClick={() => { setTab(id); setSelIssue(null); setNewIssue(false) }}
             className={`flex items-center gap-1.5 text-sm px-2.5 py-1 rounded-md transition-colors ${
@@ -270,26 +518,37 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
       {err && <p className="text-sm text-[var(--color-danger)]">{err}</p>}
       {loading && <p className="text-sm text-text-3">Loading…</p>}
 
-      {tab === 'overview' && overview && (
-        <div className="space-y-3">
-          <div className="card p-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
-            {overview.description && <span className="text-text-2 w-full">{overview.description}</span>}
-            {overview.language && <span className="text-text-3">{overview.language}</span>}
-            <span className="flex items-center gap-1 text-text-3"><Star size={13} /> {overview.stars}</span>
-            <span className="flex items-center gap-1 text-text-3"><CircleDot size={13} /> {overview.open_issues} open</span>
-            <span className="text-text-3">branch: {overview.default_branch}</span>
-            <a href={overview.html_url} target="_blank" rel="noreferrer" className="ml-auto text-accent flex items-center gap-1">
-              GitHub <ExternalLink size={13} />
-            </a>
-          </div>
-          {overview.readme_html
-            ? <div className="card p-5 gh-readme text-sm max-h-[28rem] overflow-y-auto"
-                   dangerouslySetInnerHTML={{ __html: overview.readme_html }} />
-            : <p className="text-sm text-text-3">No README.</p>}
+      {tab === 'overview' && (
+        repo.readme
+          ? <div className="card p-5 gh-readme text-sm max-h-[28rem] overflow-y-auto">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{repo.readme}</ReactMarkdown>
+            </div>
+          : <div className="card p-5 text-sm text-text-3">
+              No README yet. {repo.file_count} tracked file{repo.file_count === 1 ? '' : 's'} ·{' '}
+              {repo.head ? <>head <code>{repo.head}</code></> : 'no commits yet'}
+            </div>
+      )}
+
+      {tab === 'files' && <FilesTab interestId={interestId} />}
+
+      {tab === 'tasks' && <TasksTab interestId={interestId} />}
+
+      {tab === 'commits' && !loading && (
+        <div className="card divide-y divide-bg-3">
+          {commits.length === 0 ? <p className="text-sm text-text-3 p-4 text-center">No commits yet.</p> :
+            commits.map((c) => (
+              <div key={c.sha} className="flex items-start gap-2 p-3">
+                <GitCommit size={15} className="text-text-3 mt-0.5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-text-1 truncate">{c.message}</div>
+                  <div className="text-xs text-text-3">{c.author} · <code>{c.sha}</code> · {c.date ? new Date(c.date).toLocaleString() : ''}</div>
+                </div>
+              </div>
+            ))}
         </div>
       )}
 
-      {tab === 'issues' && (
+      {tab === 'issues' && linked && (
         selIssue !== null ? (
           <IssueDetail
             interestId={interestId} number={selIssue}
@@ -338,7 +597,7 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
         )
       )}
 
-      {tab === 'pulls' && !loading && (
+      {tab === 'pulls' && linked && !loading && (
         <div className="card divide-y divide-bg-3">
           {pulls.length === 0 ? <p className="text-sm text-text-3 p-4 text-center">No open pull requests.</p> :
             pulls.map((p) => (
@@ -347,21 +606,6 @@ export default function CodeProjectWidget(props: Record<string, unknown>) {
                 <div className="min-w-0">
                   <div className="text-sm text-text-1">{p.title} <span className="text-text-3">#{p.number}</span>{p.draft && <span className="text-xs text-text-3"> · draft</span>}</div>
                   <div className="text-xs text-text-3">{p.user}</div>
-                </div>
-              </a>
-            ))}
-        </div>
-      )}
-
-      {tab === 'activity' && !loading && (
-        <div className="card divide-y divide-bg-3">
-          {commits.length === 0 ? <p className="text-sm text-text-3 p-4 text-center">No commits.</p> :
-            commits.map((c) => (
-              <a key={c.sha} href={c.html_url} target="_blank" rel="noreferrer" className="flex items-start gap-2 p-3 hover:bg-bg-2">
-                <GitCommit size={15} className="text-text-3 mt-0.5 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm text-text-1 truncate">{c.message}</div>
-                  <div className="text-xs text-text-3">{c.author} · <code>{c.sha}</code> · {c.date ? new Date(c.date).toLocaleDateString() : ''}</div>
                 </div>
               </a>
             ))}
